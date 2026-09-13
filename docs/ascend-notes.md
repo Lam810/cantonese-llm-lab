@@ -34,6 +34,58 @@ def pick_device():
 然后把 `device_map="cuda"` 换成 `device_map=pick_device()`。`transformers` 的
 `from_pretrained` / `generate` / 前向全部照常工作，不需要改模型代码。
 
+## 起 OpenAI 兼容服务（vllm-ascend）
+
+`vllm-ascend 0.11.0` + `vllm 0.11.0`（源码 editable 安装）在 910C 上能直接起标准的
+`vllm.entrypoints.openai.api_server`，`/health`、`/v1/models`、`/v1/chat/completions` 全部照常。
+Qwen3-0.6B、TP=1、`--max-model-len 4096`，**从进程启动到 /health 通过约 65 秒**。
+
+但有两个坑会让它在引擎初始化阶段直接死掉，而且报错都指不到真正的原因：
+
+### 坑 A：`libatb.so: cannot open shared object file` —— 缺的是 NNAL，不是 vLLM
+
+```
+ERROR [patch_core.py:58] OSError: libatb.so: cannot open shared object file: No such file or directory
+ERROR [patch_core.py:58] OSError: [Errno None] Please check that the nnal package is installed.
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+```
+
+vllm-ascend 依赖 **NNAL / ATB**（Ascend Transformer Boost），它**不在 CANN 里**，是单独的包，
+而且 **`ascend-toolkit/set_env.sh` 不会把它加进库路径**。装过之后还得单独 source：
+
+```bash
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+source <nnal-install-path>/nnal/atb/set_env.sh     # 这一行才是 libatb.so 的来源
+```
+
+排查时注意：`libatb.so` 的实际路径埋得很深
+（`.../nnal/atb/<ver>/atb/cxx_abi_{0,1}/lib/libatb.so`），
+**`find -maxdepth 6` 扫不到**——我第一次就是这样误判成"没装"，实际早就装好了。
+`set_env.sh` 会按环境自动选 `cxx_abi_0/1` 并导出 `ATB_HOME_PATH`，确认一下这个变量非空即可。
+
+### 坑 B：`set -u` 会让脚本在 source 环境时直接退出
+
+昇腾的 `set_env.sh` 引用了一批可能未定义的变量：
+
+```
+set_env.sh: line 48: LD_LIBRARY_PATH: unbound variable
+set_env.sh: line 48: PYTHONPATH: unbound variable
+set_env.sh: line 31: CMAKE_PREFIX_PATH: unbound variable
+atb/set_env.sh: line 43: ZSH_VERSION: unbound variable
+```
+
+在 `set -eu` 的作业脚本里，这会让整个脚本**在第一行 source 处静默退出**，
+Slurm 还会记成正常结束。要么别用 `set -u`，要么先把这几个变量预设成空：
+
+```bash
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}
+export PYTHONPATH=${PYTHONPATH:-}
+export CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}
+```
+
+同理，作业脚本里只写 `set -x` 不写 `set -e` 时，中间命令失败也会一路跑到最后的 `echo DONE`，
+**Slurm 记成 `COMPLETED 0:0`**——看状态码会以为跑成功了。
+
 ## 四个实际踩到的坑
 
 **① 登录节点上 `import torch` 直接抛异常。**

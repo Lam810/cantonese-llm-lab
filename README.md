@@ -31,7 +31,10 @@
 **3. 把未合併的 adapter 掛回原始基座，能一步分開「訓練壞了」和「合併壞了」。**
 兩者都退化 ⇒ 合併不是根因。
 
-**4. 一套 CUDA 評測腳本搬到昇騰，代碼只需改 4 行；準確率對得上，吞吐差 3.6 倍。**
+**4. 一套 CUDA 評測腳本搬到昇騰，代碼只需改 4 行；準確率對得上（3300 題差 6 題），吞吐差 3.6 倍。**
+`vllm-ascend` 起 OpenAI 兼容服務也是通的（0.6B / TP=1，**65 秒就緒**），
+但有兩個報錯指不到真因的坑：缺 **NNAL/ATB**（`libatb.so`，不在 CANN 裡、要單獨 source），
+以及 **`set -u` 會讓腳本在 source 昇騰環境時靜默退出**。
 
 **5. 跨簡繁的字符串指標必須兩種字形都寫。**
 只寫簡體的「普通話標記詞」在繁體語料上整張表靜默失配，把粵語純度虛高成 0.964（真值 0.824）。
@@ -50,6 +53,8 @@ eval/diag_lora_merge.py     LoRA 體檢：base / base+adapter / merged 三路對
 data/build_yue_sft.py       多源粵語 SFT 數據重建：合併→opencc 簡繁歸一→兩級去重
                             →按來源分層切 train/dev/test（先切再訓，杜絕洩漏）
 train/train_yue_lora.py     LoRA SFT：帶驗證集＋早停＋只對 assistant 段算 loss
+deploy/npu_serve_test.sh    昇騰上起 vllm-ascend OpenAI 兼容服務並驗收（健康檢查／對話／吞吐）
+train/merge_lora.py         單進程合併 LoRA 並自動做 ‖ΔW‖/‖W‖ 體檢
 docs/                       復盤與昇騰筆記
 results/                    評測數字
 ```

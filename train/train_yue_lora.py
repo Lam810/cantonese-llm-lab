@@ -115,7 +115,9 @@ def main():
               ensure_ascii=False, indent=1)
     print("[best] eval_loss =", trainer.state.best_metric, flush=True)
 
-    if a.merge:
+    # 只在 rank 0 上合并落盘：多卡时每个 rank 都写同一个目录会把 safetensors 写坏
+    is_main = int(os.environ.get("RANK", "0")) == 0
+    if a.merge and is_main:
         merged = model.merge_and_unload()
         merged.config.use_cache = True
         mdir = os.path.join(a.out, "merged")
