@@ -39,6 +39,12 @@
 **5. 跨簡繁的字符串指標必須兩種字形都寫。**
 只寫簡體的「普通話標記詞」在繁體語料上整張表靜默失配，把粵語純度虛高成 0.964（真值 0.824）。
 
+**7. 「本地重新合併的權重」和「實際被評測的權重」只是假定等價——要驗。**
+搬 16GB 不現實時，只搬 349MB 的 adapter、本地合併是對的；但必須用帶鑑權的 HTTP range
+請求逐字節比對（抽 3 個張量各 32,768 個 bf16 元素，100% 相同）。
+同一個代理可能下載 8.7 MB/s、上傳 0.1 MB/s——**兩個方向要分別測**。
+詳見 [`docs/publishing-logistics.md`](docs/publishing-logistics.md)。
+
 **6. 對帶思維鏈的模型做「第一個 token」類打分，先確認第一個 token 是不是答案位。**
 選擇題比較 A/B/C/D 的 logprob，而 Qwen3 默認開思維鏈、第一個 token 是 `<think>`，
 量到的是「它想先想一想」。基座因此只有 0.2888（近隨機），關掉後是 0.5700——
@@ -62,6 +68,7 @@ train/train_yue_lora.py     LoRA SFT：帶驗證集＋早停＋只對 assistant 
 deploy/npu_serve_test.sh    昇騰上起 vllm-ascend OpenAI 兼容服務並驗收（健康檢查／對話／吞吐）
 train/merge_lora.py         單進程合併 LoRA 並自動做 ‖ΔW‖/‖W‖ 體檢
 docs/data-licensing.md      為什麼合併語料不能再分發（四個來源裡兩個不能），以及對權重授權的連帶影響
+docs/publishing-logistics.md 把 16GB 權重從隔離集群搬到公開托管站：各段實測帶寬、只搬 adapter 的做法、逐字節驗證
 docs/                       復盤與昇騰筆記
 results/v2_results.md       v2（Qwen3-8B + LoRA）的訓練、合併體檢與評測，含一個被自己修掉的錯誤結論
 results/                    評測數字
