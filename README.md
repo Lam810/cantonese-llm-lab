@@ -55,6 +55,7 @@ data/build_yue_sft.py       多源粵語 SFT 數據重建：合併→opencc 簡�
 train/train_yue_lora.py     LoRA SFT：帶驗證集＋早停＋只對 assistant 段算 loss
 deploy/npu_serve_test.sh    昇騰上起 vllm-ascend OpenAI 兼容服務並驗收（健康檢查／對話／吞吐）
 train/merge_lora.py         單進程合併 LoRA 並自動做 ‖ΔW‖/‖W‖ 體檢
+docs/data-licensing.md      為什麼合併語料不能再分發（四個來源裡兩個不能），以及對權重授權的連帶影響
 docs/                       復盤與昇騰筆記
 results/                    評測數字
 ```
@@ -81,6 +82,12 @@ results/                    評測數字
 合併四個公開來源（作者自建的粵語指令集、粵語 CoT、粵語對話、粵中平行語料），
 統一 opencc `s2hk` 字形，兩級去重（整條 + 同 instruction），按來源分層切分，
 固定 `seed=42`：**71,202 條**（train 68,202 / dev 1,000 / test 2,000）。
+確定性已驗證：兩台不同機器重跑，各來源條數、去重數、切分大小逐項一致。
+
+⚠️ **合併語料不再分發**——四個來源裡有一個**沒有任何授權聲明**、一個是 **AGPL-3.0**，
+佔了 62%。公開的是腳本，可再分發的那 27,207 條（自有 + CC0）單獨發在
+[`Zeteng/cantonese-llm-data`](https://huggingface.co/datasets/Zeteng/cantonese-llm-data) 的
+`v2-clean/`。詳見 [`docs/data-licensing.md`](docs/data-licensing.md)。
 
 兩個值得記下的數字：
 - **50,606 條**記錄在建庫時被簡繁歸一化過——公開粵語語料的簡繁混排問題是大面積的；

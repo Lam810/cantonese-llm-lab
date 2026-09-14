@@ -96,6 +96,8 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--min-yue-ratio", type=float, default=None, help="默认不过滤；只用于消融")
     ap.add_argument("--no-opencc", action="store_true")
+    ap.add_argument("--only-sources", default="",
+                    help="逗号分隔的来源名；只保留这些来源。用于产出可再分发的授权干净子集")
     a = ap.parse_args()
 
     cc = None
@@ -124,10 +126,17 @@ def main():
             stats[f"{source}/kept"] += 1
             if changed: stats[f"{source}/script_normalized"] += 1
 
-    add("zeteng-cantonese-llm-data", src_zeteng(a.zeteng_jsonl))
-    add("indiejoseph-cantonese-cot", src_alpaca(os.path.join(a.raw_dir, "indiejoseph_cantonese-cot")))
-    add("stvlynn-cantonese-dialogue", src_alpaca(os.path.join(a.raw_dir, "stvlynn_Cantonese-Dialogue")))
-    add("raptorkwok-parallel", src_parallel(os.path.join(a.raw_dir, "raptorkwok_cantonese-chinese-parallel-corpus-base"), 12000))
+    keep = set(x for x in a.only_sources.split(",") if x)
+    def want(name): return (not keep) or (name in keep)
+
+    if want("zeteng-cantonese-llm-data"):
+        add("zeteng-cantonese-llm-data", src_zeteng(a.zeteng_jsonl))
+    if want("indiejoseph-cantonese-cot"):
+        add("indiejoseph-cantonese-cot", src_alpaca(os.path.join(a.raw_dir, "indiejoseph_cantonese-cot")))
+    if want("stvlynn-cantonese-dialogue"):
+        add("stvlynn-cantonese-dialogue", src_alpaca(os.path.join(a.raw_dir, "stvlynn_Cantonese-Dialogue")))
+    if want("raptorkwok-parallel"):
+        add("raptorkwok-parallel", src_parallel(os.path.join(a.raw_dir, "raptorkwok_cantonese-chinese-parallel-corpus-base"), 12000))
 
     # cot 封顶，避免单一来源压过其它
     cap = {"indiejoseph-cantonese-cot": 30000}
@@ -193,6 +202,7 @@ def main():
                     "p75": ratios[3*len(ratios)//4] if ratios else None,
                     "n_with_markers": len(ratios)},
       "counters": dict(stats), "opencc": "s2hk" if cc else None,
+      "only_sources": sorted(keep) or "all",
     }
     json.dump(summary, open(os.path.join(a.out_dir, "stats.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
