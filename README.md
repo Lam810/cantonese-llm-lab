@@ -39,6 +39,12 @@
 **5. 跨簡繁的字符串指標必須兩種字形都寫。**
 只寫簡體的「普通話標記詞」在繁體語料上整張表靜默失配，把粵語純度虛高成 0.964（真值 0.824）。
 
+**6. 對帶思維鏈的模型做「第一個 token」類打分，先確認第一個 token 是不是答案位。**
+選擇題比較 A/B/C/D 的 logprob，而 Qwen3 默認開思維鏈、第一個 token 是 `<think>`，
+量到的是「它想先想一想」。基座因此只有 0.2888（近隨機），關掉後是 0.5700——
+**我一度把 v2 的增益寫成 +31.85pp，真實值是 +3.94pp。**
+詳見 [`results/v2_results.md`](results/v2_results.md)。
+
 詳見 [`docs/v1-postmortem.md`](docs/v1-postmortem.md) 和 [`docs/ascend-notes.md`](docs/ascend-notes.md)。
 
 ---
@@ -57,6 +63,7 @@ deploy/npu_serve_test.sh    昇騰上起 vllm-ascend OpenAI 兼容服務並驗�
 train/merge_lora.py         單進程合併 LoRA 並自動做 ‖ΔW‖/‖W‖ 體檢
 docs/data-licensing.md      為什麼合併語料不能再分發（四個來源裡兩個不能），以及對權重授權的連帶影響
 docs/                       復盤與昇騰筆記
+results/v2_results.md       v2（Qwen3-8B + LoRA）的訓練、合併體檢與評測，含一個被自己修掉的錯誤結論
 results/                    評測數字
 ```
 

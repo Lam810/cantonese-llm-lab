@@ -52,17 +52,31 @@ def load_model(path, dtype):
     model.eval()
     return tok, model
 
-def chat_prompt(tok, user):
+def chat_prompt(tok, user, no_think=False):
+    """no_think=True 时关掉 Qwen3 的思维链。
+
+    为什么必须有这个开关：选择题是比较第一个位置上 A/B/C/D 的 logprob，而开着思维链的
+    模型第一个 token 是 <think>，于是量到的是「它想先想一想」而不是它的知识。
+    原版 Qwen3-8B 在这个混淆下只有 0.2888（接近随机），关掉之后才是它真实的水平。
+    """
     if getattr(tok, "chat_template", None):
+        msgs = [{"role": "user", "content": user}]
+        if no_think:
+            try:
+                return tok.apply_chat_template(msgs, tokenize=False,
+                                               add_generation_prompt=True, enable_thinking=False)
+            except TypeError:
+                # 模板不认 enable_thinking：手动补一个空的思维块把它关掉
+                base = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+                return base + "<think>\n\n</think>\n\n"
         try:
-            return tok.apply_chat_template([{"role":"user","content":user}],
-                                           tokenize=False, add_generation_prompt=True)
+            return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         except Exception:
             pass
     return user + "\n"
 
 # ---------------- 任务 1：HKMMLU ----------------
-def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device):
+def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device, no_think=True):
     files = sorted(glob.glob(os.path.join(data_dir, "**", "test", "*.csv"), recursive=True))
     if not files:
         files = sorted(glob.glob(os.path.join(data_dir, "**", "*test*.csv"), recursive=True))
@@ -87,7 +101,7 @@ def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device):
             if not q or gold not in letters: continue
             body = (f"以下係一道香港知識選擇題，請只答 A、B、C 或 D。\n\n題目：{q}\n"
                     + "\n".join(f"{L}. {o}" for L, o in zip(letters, opts)) + "\n\n答案：")
-            ids = tok(chat_prompt(tok, body), return_tensors="pt").to(device)
+            ids = tok(chat_prompt(tok, body, no_think=no_think), return_tensors="pt").to(device)
             with torch.no_grad():
                 logits = model(**ids).logits[0, -1]
             pred = letters[int(torch.tensor([logits[i] for i in letter_ids]).argmax())]
@@ -99,7 +113,7 @@ def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device):
     dse = {k: v for k, v in per_cfg.items() if k.startswith("hkdse_")}
     agg = lambda d: (sum(v["acc"]*v["n"] for v in d.values())/sum(v["n"] for v in d.values())
                      if d else None)
-    return {"overall_acc": n_correct/n_all if n_all else None, "n": n_all,
+    return {"overall_acc": n_correct/n_all if n_all else None, "n": n_all, "no_think": no_think,
             "hk_subset_acc": agg(hk), "hkdse_subset_acc": agg(dse),
             "random_baseline": 0.25, "per_config": per_cfg}
 
@@ -107,10 +121,10 @@ def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device):
 def count_markers(text, markers):
     return sum(text.count(m) for m in markers)
 
-def task_purity(tok, model, device, max_new_tokens=128):
+def task_purity(tok, model, device, max_new_tokens=128, no_think=False):
     outs = []
     for p in PURITY_PROMPTS:
-        ids = tok(chat_prompt(tok, p), return_tensors="pt").to(device)
+        ids = tok(chat_prompt(tok, p, no_think=no_think), return_tensors="pt").to(device)
         with torch.no_grad():
             g = model.generate(**ids, max_new_tokens=max_new_tokens, do_sample=False,
                                pad_token_id=tok.pad_token_id)
@@ -122,7 +136,8 @@ def task_purity(tok, model, device, max_new_tokens=128):
         outs.append({"prompt": p, "response": resp, "yue": y, "zh": z,
                      "ratio": y/(y+z) if (y+z) else None, "len": len(resp), "degenerate": degen})
     valid = [o for o in outs if o["ratio"] is not None]
-    return {"mean_yue_ratio": sum(o["ratio"] for o in valid)/len(valid) if valid else None,
+    return {"no_think": no_think,
+            "mean_yue_ratio": sum(o["ratio"] for o in valid)/len(valid) if valid else None,
             "median_len": sorted(o["len"] for o in outs)[len(outs)//2],
             "degenerate_rate": sum(o["degenerate"] for o in outs)/len(outs),
             "n_prompts": len(outs), "samples": outs}
@@ -172,6 +187,11 @@ def main():
     ap.add_argument("--tasks", default="hkmmlu,purity,ppl")
     ap.add_argument("--hkmmlu-dir", default="$LAB_ROOT/data/HKMMLU")
     ap.add_argument("--limit-per-cfg", type=int, default=0)
+    ap.add_argument("--purity-no-think", action="store_true",
+                    help="生成任务也关掉思维链。对照基座时建议开，否则基座满屏 <think> 的普通话推理，"
+                         "粤语纯度量到的是它的思考过程而不是它的回答")
+    ap.add_argument("--hkmmlu-think", action="store_true",
+                    help="选择题保留思维链（默认关掉；开着会把 <think> 当成答案位）")
     ap.add_argument("--corpora", default="")
     ap.add_argument("--corpus-limit", type=int, default=300)
     ap.add_argument("--dtype", default="bfloat16")
@@ -186,10 +206,11 @@ def main():
            "n_params": sum(p.numel() for p in model.parameters())}
     tasks = a.tasks.split(",")
     if "hkmmlu" in tasks:
-        res["hkmmlu"] = task_hkmmlu(tok, model, a.hkmmlu_dir, a.limit_per_cfg, device)
+        res["hkmmlu"] = task_hkmmlu(tok, model, a.hkmmlu_dir, a.limit_per_cfg, device,
+                                    no_think=not a.hkmmlu_think)
         print(f"[{a.name}] hkmmlu overall={res['hkmmlu'].get('overall_acc')}", flush=True)
     if "purity" in tasks:
-        res["purity"] = task_purity(tok, model, device)
+        res["purity"] = task_purity(tok, model, device, no_think=a.purity_no_think)
         print(f"[{a.name}] yue_ratio={res['purity']['mean_yue_ratio']}", flush=True)
     if "ppl" in tasks and a.corpora:
         res["ppl"] = task_ppl(tok, model, device, load_corpora(a.corpora, a.corpus_limit))

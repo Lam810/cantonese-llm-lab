@@ -2,10 +2,16 @@
 # 昇腾 910C 上用 vllm-ascend 起 OpenAI 兼容服务并验收。
 # 设计目标：一次作业内把「小模型验通路 → 目标模型上线 → 功能与吞吐验收」全做完，
 # 不做交互式探索——NPU 按机时计费。
-set -u
+# 不能用 set -u：昇腾的 set_env.sh 会引用未定义的 LD_LIBRARY_PATH / PYTHONPATH /
+# CMAKE_PREFIX_PATH / ZSH_VERSION，开了就在第一行 source 处静默退出（Slurm 还记成正常结束）
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}
+export PYTHONPATH=${PYTHONPATH:-}
+export CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}
 L=$LAB_ROOT
 E=$VENV
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
+# NNAL / ATB：libatb.so 只在这里，CANN 的 set_env 不会加它；缺了 vllm-ascend 的 EngineCore 起不来
+source $ASCEND_USER_HOME/nnal/atb/set_env.sh
 export VLLM_USE_MODELSCOPE=false
 export HF_HUB_OFFLINE=1
 export PYTHONPATH=${PYTHONPATH:-}:$L/pylibs

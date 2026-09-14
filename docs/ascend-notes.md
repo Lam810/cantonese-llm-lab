@@ -138,6 +138,42 @@ print(torch.npu.is_available(), torch.npu.device_count())
 x = torch.randn(512, 512).npu(); print((x @ x).sum().item())
 ```
 
+## 8B 模型的实测（v2，bf16 未量化）
+
+`Qwen3-8B` 基座 + LoRA 合并后的 16.4 GB bf16 权重，910C 单 die、TP=1、`--max-model-len 4096`：
+
+| | |
+|---|---|
+| 服务就绪 | **70 秒** |
+| 对话 | 正常，输出自然书面粤语 |
+| 吞吐 | 8 并发 **286 tok/s**（⚠️ 8 个请求用的是同一个 prompt，有前缀缓存加成，不是冷启动数字） |
+
+一个要写进 card 的观察：**贪心解码（temperature=0）在列举类问题上会重复**
+（「維多利亞港係香港嘅一個著名景點」连出 7 次），同一份权重在 CUDA 上用
+`transformers` 跑 30 条提问时退化率是 0。生成建议用 `temperature>0`。
+
+### 又一个版本兼容坑：transformers 5.x 存的分词器，4.x 读不了
+
+合并是在 transformers **5.6.2** 上做的，部署环境是 **4.57.1**，服务启动直接崩：
+
+```
+AttributeError: 'list' object has no attribute 'keys'
+  ... _set_model_specific_special_tokens(special_tokens=self.extra_special_tokens)
+```
+
+5.x 把 `extra_special_tokens` 写成 list，4.x 期望 dict；而且 5.x **只存 `tokenizer.json`**，
+不再存 `vocab.json` / `merges.txt` / `special_tokens_map.json`，老工具链会缺文件。
+
+**正确修法不是打补丁，而是把上游基座的完整分词器文件覆盖进合并产物**——LoRA 根本没动分词器。
+顺带注意：上游 Qwen3 把 chat template 嵌在 `tokenizer_config.json` 里，
+而 5.x 会额外写一个 `chat_template.jinja`，两者并存有歧义，应删掉后者。
+
+### 一个纯属自找的坑
+
+我给这个 serving 脚本打过 NNAL 和 `set -u` 两个补丁，**但只打在集群那份上**；
+后来改了本机副本再 scp 覆盖过去，**把两个修复都冲掉了**，于是 `libatb.so` 的错误原封不动地复现。
+**脚本必须有唯一源头**，远端热修完要立刻同步回本地，否则下一次同步就是一次回退。
+
 ## 还没做的
 
 - 图模式 / 融合算子（`torch_npu` 的 `torchair`），预期是把 3.6 倍的差距压下来的主要手段
