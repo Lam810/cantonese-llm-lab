@@ -117,6 +117,85 @@ def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device, no_think=True):
             "hk_subset_acc": agg(hk), "hkdse_subset_acc": agg(dse),
             "random_baseline": 0.25, "per_config": per_cfg}
 
+
+# ---------------- 任务 1b：生成式 HKMMLU（给 Thinking 模型的公平口径）----------------
+# 首 token logprob 那套对开思维链的模型是错的——第一个 token 是 <think>，量到的是
+# 「它想先想一想」。要让思维链模型发挥，必须让它把推理生成完，再从末尾解析答案。
+_ANS_RE = re.compile(r"(?:答案|answer|選|选)\s*(?:係|是|为|為)?\s*[:：]?\s*[（(\[]?\s*([ABCD])",
+                     re.IGNORECASE)
+# 不能用 \b：中文字在 Unicode 下算 \w，「答案是A。」里 A 左边没有词边界
+_BARE_RE = re.compile(r"(?<![A-Za-z])([ABCD])(?![A-Za-z])")
+
+def parse_choice(text):
+    """从生成文本里解析 A/B/C/D。解析不出返回 None——不要静默算错，那会把
+    「答不出格式」和「答错了」混成一个数字。"""
+    body = text.split("</think>")[-1] if "</think>" in text else text
+    for rx in (_ANS_RE, _BARE_RE):
+        m = list(rx.finditer(body))
+        if m: return m[-1].group(1).upper()
+    if body is not text:                       # think 没闭合时退回整段
+        for rx in (_ANS_RE, _BARE_RE):
+            m = list(rx.finditer(text))
+            if m: return m[-1].group(1).upper()
+    return None
+
+def _gen_batch(tok, model, prompts, device, max_new_tokens):
+    old_side = tok.padding_side
+    tok.padding_side = "left"                  # 批量生成必须左填充，否则续写位置错
+    if tok.pad_token_id is None: tok.pad_token = tok.eos_token
+    enc = tok(prompts, return_tensors="pt", padding=True).to(device)
+    with torch.no_grad():
+        g = model.generate(**enc, max_new_tokens=max_new_tokens, do_sample=False,
+                           pad_token_id=tok.pad_token_id)
+    plen = enc["input_ids"].shape[-1]
+    tok.padding_side = old_side
+    return [tok.decode(row[plen:], skip_special_tokens=False) for row in g]
+
+def task_hkmmlu_gen(tok, model, data_dir, limit_per_cfg, device,
+                    no_think=False, max_new_tokens=512, batch=8):
+    files = sorted(glob.glob(os.path.join(data_dir, "**", "test", "*.csv"), recursive=True))
+    if not files:
+        files = sorted(glob.glob(os.path.join(data_dir, "**", "*test*.csv"), recursive=True))
+    if not files: return {"error": f"no test csv under {data_dir}"}
+    letters = ["A","B","C","D"]
+    per_cfg, n_all, n_correct, n_unparsed, tok_total = {}, 0, 0, 0, 0
+    for f in files:
+        cfg = os.path.splitext(os.path.basename(f))[0]
+        rows = list(csv.DictReader(open(f, encoding="utf-8")))
+        if limit_per_cfg: rows = rows[:limit_per_cfg]
+        items = []
+        for r in rows:
+            q = (r.get("Question") or r.get("question") or "").strip()
+            opts = [(r.get(L) or "").strip() for L in letters]
+            gold = (r.get("Answer") or r.get("answer") or "").strip().upper()[:1]
+            if not q or gold not in letters: continue
+            body = (f"以下係一道香港知識選擇題，請答 A、B、C 或 D。\n\n題目：{q}\n"
+                    + "\n".join(f"{L}. {o}" for L, o in zip(letters, opts))
+                    + "\n\n請喺最後一行寫「答案：X」。")
+            items.append((chat_prompt(tok, body, no_think=no_think), gold))
+        c = t = u = 0
+        for i in range(0, len(items), batch):
+            chunk = items[i:i+batch]
+            outs = _gen_batch(tok, model, [x[0] for x in chunk], device, max_new_tokens)
+            for (_, gold), o in zip(chunk, outs):
+                tok_total += len(tok.encode(o, add_special_tokens=False))
+                pred = parse_choice(o)
+                if pred is None: u += 1
+                c += int(pred == gold); t += 1
+        if t:
+            per_cfg[cfg] = {"acc": c/t, "n": t, "unparsed": u}
+            n_all += t; n_correct += c; n_unparsed += u
+    hk  = {k: v for k, v in per_cfg.items() if k.startswith("hk_")}
+    dse = {k: v for k, v in per_cfg.items() if k.startswith("hkdse_")}
+    agg = lambda d: (sum(v["acc"]*v["n"] for v in d.values())/sum(v["n"] for v in d.values())
+                     if d else None)
+    return {"mode": "gen", "overall_acc": n_correct/n_all if n_all else None, "n": n_all,
+            "no_think": no_think, "n_unparsed": n_unparsed,
+            "unparsed_rate": n_unparsed/n_all if n_all else None,
+            "mean_out_tokens": tok_total/n_all if n_all else None,
+            "hk_subset_acc": agg(hk), "hkdse_subset_acc": agg(dse),
+            "random_baseline": 0.25, "per_config": per_cfg}
+
 # ---------------- 任务 2：书面粤语纯度 ----------------
 def count_markers(text, markers):
     return sum(text.count(m) for m in markers)
@@ -128,17 +207,33 @@ def task_purity(tok, model, device, max_new_tokens=128, no_think=False):
         with torch.no_grad():
             g = model.generate(**ids, max_new_tokens=max_new_tokens, do_sample=False,
                                pad_token_id=tok.pad_token_id)
-        resp = tok.decode(g[0][ids["input_ids"].shape[-1]:], skip_special_tokens=True)
+        out_ids = g[0][ids["input_ids"].shape[-1]:]
+        raw = tok.decode(out_ids, skip_special_tokens=False)
+        n_tok = int(out_ids.shape[-1])
+        # 思维链的开销要单独记：在昇腾 462 tok/s 下，烧 500 个 token 想一想是实打实的延迟。
+        # 纯度只量正文——think 块里常是普通话/英文，混进去会污染这个指标。
+        if "</think>" in raw:
+            think_txt, body_txt = raw.split("</think>", 1)
+            n_think = len(tok.encode(think_txt, add_special_tokens=False))
+        else:
+            body_txt, n_think = raw, 0
+        resp = tok.decode(tok.encode(body_txt, add_special_tokens=False),
+                          skip_special_tokens=True).strip()
         y, z = count_markers(resp, YUE_MARKERS), count_markers(resp, ZH_MARKERS)
         # 退化检测：末尾 40 字里有没有 8 字以上的重复块
         tail = resp[-60:]
         degen = bool(re.search(r"(.{6,})\1{2,}", resp))
         outs.append({"prompt": p, "response": resp, "yue": y, "zh": z,
-                     "ratio": y/(y+z) if (y+z) else None, "len": len(resp), "degenerate": degen})
+                     "ratio": y/(y+z) if (y+z) else None, "len": len(resp),
+                     "out_tokens": n_tok, "think_tokens": n_think, "degenerate": degen})
     valid = [o for o in outs if o["ratio"] is not None]
+    med = lambda k: sorted(o[k] for o in outs)[len(outs)//2]
     return {"no_think": no_think,
             "mean_yue_ratio": sum(o["ratio"] for o in valid)/len(valid) if valid else None,
-            "median_len": sorted(o["len"] for o in outs)[len(outs)//2],
+            "median_len": med("len"),
+            "median_out_tokens": med("out_tokens"),
+            "median_think_tokens": med("think_tokens"),
+            "think_rate": sum(o["think_tokens"] > 0 for o in outs)/len(outs),
             "degenerate_rate": sum(o["degenerate"] for o in outs)/len(outs),
             "n_prompts": len(outs), "samples": outs}
 
@@ -192,6 +287,16 @@ def main():
                          "粤语纯度量到的是它的思考过程而不是它的回答")
     ap.add_argument("--hkmmlu-think", action="store_true",
                     help="选择题保留思维链（默认关掉；开着会把 <think> 当成答案位）")
+    ap.add_argument("--purity-max-new", type=int, default=128,
+                    help="生成长度上限。默认 128 与已发布口径一致；开思维链时必须调大，"
+                         "否则会在 think 块中间截断，量到的是半截思考过程")
+    ap.add_argument("--hkmmlu-gen", action="store_true",
+                    help="选择题改成生成式：让模型把思维链生成完，再从末尾解析答案。"
+                         "对 Thinking 模型这是唯一公平的口径")
+    ap.add_argument("--hkmmlu-gen-limit", type=int, default=10,
+                    help="生成式口径下每个 config 取几题（贵，默认 10 → n≈660，标准误约 1.7pp）")
+    ap.add_argument("--gen-max-new", type=int, default=512)
+    ap.add_argument("--gen-batch", type=int, default=8)
     ap.add_argument("--corpora", default="")
     ap.add_argument("--corpus-limit", type=int, default=300)
     ap.add_argument("--dtype", default="bfloat16")
@@ -208,10 +313,21 @@ def main():
     if "hkmmlu" in tasks:
         res["hkmmlu"] = task_hkmmlu(tok, model, a.hkmmlu_dir, a.limit_per_cfg, device,
                                     no_think=not a.hkmmlu_think)
-        print(f"[{a.name}] hkmmlu overall={res['hkmmlu'].get('overall_acc')}", flush=True)
+        print(f"[{a.name}] hkmmlu(logprob) overall={res['hkmmlu'].get('overall_acc')}", flush=True)
+    if "hkmmlu_gen" in tasks or a.hkmmlu_gen:
+        res["hkmmlu_gen"] = task_hkmmlu_gen(tok, model, a.hkmmlu_dir, a.hkmmlu_gen_limit, device,
+                                            no_think=not a.hkmmlu_think,
+                                            max_new_tokens=a.gen_max_new, batch=a.gen_batch)
+        g = res["hkmmlu_gen"]
+        print(f"[{a.name}] hkmmlu(gen) overall={g.get('overall_acc')} "
+              f"解析不出={g.get('unparsed_rate')} 平均输出 token={g.get('mean_out_tokens')}", flush=True)
     if "purity" in tasks:
-        res["purity"] = task_purity(tok, model, device, no_think=a.purity_no_think)
-        print(f"[{a.name}] yue_ratio={res['purity']['mean_yue_ratio']}", flush=True)
+        res["purity"] = task_purity(tok, model, device, max_new_tokens=a.purity_max_new,
+                                    no_think=a.purity_no_think)
+        pu = res["purity"]
+        print(f"[{a.name}] yue_ratio={pu['mean_yue_ratio']} 退化={pu['degenerate_rate']} "
+              f"中位输出token={pu['median_out_tokens']} 中位think token={pu['median_think_tokens']} "
+              f"出现think比例={pu['think_rate']}", flush=True)
     if "ppl" in tasks and a.corpora:
         res["ppl"] = task_ppl(tok, model, device, load_corpora(a.corpora, a.corpus_limit))
         print(f"[{a.name}] ppl={ {k:(v or {}).get('ppl') for k,v in res['ppl'].items()} }", flush=True)
