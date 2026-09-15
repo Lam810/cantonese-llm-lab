@@ -37,6 +37,52 @@ PURITY_PROMPTS = [
  "邊度可以睇到香港靚嘅夜景？","咩叫做強制檢測？","做運動有咩好處？",
  "點樣同上司講加人工？","香港有咩傳統小食？","我想養隻貓，要注意咩？",
  "點樣分辨網上嘅假新聞？","坐飛機前有咩要檢查？",
+ # ---- 以下 90 條為 2026-09 擴充：退化率在 30 條上分辨率只有 1/30=0.033，
+ # ---- 差一兩條就是一格，沒法做變體之間的比較；擴到 120 條才有意義。
+ # 交通
+ "西鐵同東鐵有咩唔同？","過大海搭船定搭巴士好？","點樣由機場返市區最平？",
+ "紅隧塞車嘅話有咩替代路線？","電車坐一程要幾錢？","的士紅色綠色藍色有咩分別？",
+ # 飲食
+ "點樣煲一煲靚湯？","蛋撻同葡撻邊樣好食啲？","茶餐廳嘅絲襪奶茶點解咁香？",
+ "打邊爐要準備啲咩？","有咩宵夜推薦？","素食者喺香港食咩好？",
+ # 住屋
+ "劏房同套房有咩分別？","租樓要注意啲咩條款？","裝修大約要預幾多錢？",
+ "業主唔肯退按金點算？","居屋同公屋有咩分別？",
+ # 理財
+ "點樣開始儲錢？","強積金可唔可以自己揀基金？","信用卡簽賬有咩陷阱？",
+ "香港嘅薪俸稅係點計？","買保險要留意咩？","定期存款同債券邊樣穩陣啲？",
+ # 醫療
+ "感冒同流感點分？","公立醫院專科排期要幾耐？","打疫苗前要注意咩？",
+ "腰痠背痛有咩方法紓緩？","點樣改善失眠？","體檢一般要驗邊啲項目？",
+ # 教育
+ "DSE 選科有咩策略？","副學士值唔值得讀？","小朋友幾多歲開始學英文好？",
+ "點樣揀補習社？","大學宿舍申請難唔難？",
+ # 工作
+ "面試要準備啲咩？","辭職要提前幾耐通知？","打工仔放病假有冇糧出？",
+ "點樣寫一份好嘅 CV？","公司要求成日超時工作可以點？","轉行要考慮啲咩？",
+ # 科技
+ "點樣防止手機中毒？","Wi-Fi 好慢可以點解決？","雲端備份邊個好用？",
+ "電腦開機好慢點算？","點樣設定一個安全嘅密碼？","AI 會唔會搶走我份工？",
+ # 節慶
+ "農曆新年有咩習俗？","端午節點解要食糉？","盂蘭節係咩嚟？",
+ "冬至同新年邊個大？","天后誕有咩活動？","香港有咩本地節慶值得睇？",
+ # 情感人際
+ "同朋友嗌交咗點樣和好？","覺得工作壓力好大點算？","點樣同父母溝通？",
+ "第一次約會去邊好？","朋友借錢唔還可以點？","點樣拒絕人而唔傷感情？",
+ # 旅遊
+ "台灣自由行點樣安排？","去泰國要唔要簽證？","窮遊有咩慳錢方法？",
+ "帶老人家去旅行要注意咩？","香港離島邊個最值得去？","行山新手行邊條路線好？",
+ # 法律行政
+ "點樣申請身份證？","結婚登記要準備咩文件？","被解僱可以點追討？",
+ "交通違例罰款點交？","遺囑要點寫先至有效？",
+ # 娛樂
+ "點樣揀一部好睇嘅電影？","學樂器邊樣最易入門？","養魚要注意咩？",
+ "點樣影一張靚相？","打機打得太耐有咩壞處？","點樣養成睇書嘅習慣？",
+ # 知識解釋
+ "點解天空係藍色嘅？","通脹係咩意思？","咩叫做碳中和？",
+ "地震點解會發生？","區塊鏈簡單嚟講係咩？","點解要有時區？",
+ "水點解會結冰？","咩係複利效應？","疫苗嘅原理係點？",
+ "點解飛機可以飛得起身？","基因改造食物安唔安全？","咩係量子電腦？",
 ]
 
 def load_model(path, dtype):
@@ -88,12 +134,12 @@ def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device, no_think=True):
     for L in letters:
         ids = tok.encode(L, add_special_tokens=False)
         letter_ids.append(ids[0])
-    per_cfg, n_all, n_correct = {}, 0, 0
+    per_cfg, n_all, n_correct, preds = {}, 0, 0, {}
     for f in files:
         cfg = os.path.splitext(os.path.basename(f))[0]
         rows = list(csv.DictReader(open(f, encoding="utf-8")))
         if limit_per_cfg: rows = rows[:limit_per_cfg]
-        c = t = 0
+        c = t = 0; golds, preds_s = [], []
         for r in rows:
             q = (r.get("Question") or r.get("question") or "").strip()
             opts = [(r.get(L) or "").strip() for L in letters]
@@ -105,18 +151,41 @@ def task_hkmmlu(tok, model, data_dir, limit_per_cfg, device, no_think=True):
             with torch.no_grad():
                 logits = model(**ids).logits[0, -1]
             pred = letters[int(torch.tensor([logits[i] for i in letter_ids]).argmax())]
+            golds.append(gold); preds_s.append(pred)
             c += int(pred == gold); t += 1
         if t:
             per_cfg[cfg] = {"acc": c/t, "n": t}
+            preds[cfg] = {"gold": "".join(golds), "pred": "".join(preds_s)}
             n_all += t; n_correct += c
     hk = {k: v for k, v in per_cfg.items() if k.startswith("hk_")}
     dse = {k: v for k, v in per_cfg.items() if k.startswith("hkdse_")}
     agg = lambda d: (sum(v["acc"]*v["n"] for v in d.values())/sum(v["n"] for v in d.values())
                      if d else None)
+    macro = (sum(v["acc"] for v in per_cfg.values())/len(per_cfg)) if per_cfg else None
     return {"overall_acc": n_correct/n_all if n_all else None, "n": n_all, "no_think": no_think,
+            "macro_acc": macro,                       # config 不等长，micro 会被大 config 拉走
+            "ci95": bootstrap_ci(per_cfg, preds),
             "hk_subset_acc": agg(hk), "hkdse_subset_acc": agg(dse),
-            "random_baseline": 0.25, "per_config": per_cfg}
+            "random_baseline": 0.25, "per_config": per_cfg,
+            "preds": preds}                           # 逐题预测：配对检验的唯一依据
 
+
+
+def bootstrap_ci(per_cfg, preds, n_boot=2000, seed=0):
+    """对逐题对错做 bootstrap。不是把 acc 当正态——config 之间差异很大，
+    正态近似在这里会低估不确定性。"""
+    import random
+    flat = []
+    for cfg, d in preds.items():
+        flat.extend(int(g == p) for g, p in zip(d["gold"], d["pred"]))
+    if not flat: return None
+    rng = random.Random(seed); N = len(flat)
+    accs = []
+    for _ in range(n_boot):
+        s = sum(flat[rng.randrange(N)] for _ in range(N))
+        accs.append(s / N)
+    accs.sort()
+    return {"lo": accs[int(0.025*n_boot)], "hi": accs[int(0.975*n_boot)], "n_boot": n_boot}
 
 # ---------------- 任务 1b：生成式 HKMMLU（给 Thinking 模型的公平口径）----------------
 # 首 token logprob 那套对开思维链的模型是错的——第一个 token 是 <think>，量到的是
@@ -200,9 +269,9 @@ def task_hkmmlu_gen(tok, model, data_dir, limit_per_cfg, device,
 def count_markers(text, markers):
     return sum(text.count(m) for m in markers)
 
-def task_purity(tok, model, device, max_new_tokens=128, no_think=False):
+def task_purity(tok, model, device, max_new_tokens=128, no_think=False, limit=0):
     outs = []
-    for p in PURITY_PROMPTS:
+    for p in (PURITY_PROMPTS[:limit] if limit else PURITY_PROMPTS):
         ids = tok(chat_prompt(tok, p, no_think=no_think), return_tensors="pt").to(device)
         with torch.no_grad():
             g = model.generate(**ids, max_new_tokens=max_new_tokens, do_sample=False,
@@ -228,7 +297,16 @@ def task_purity(tok, model, device, max_new_tokens=128, no_think=False):
                      "out_tokens": n_tok, "think_tokens": n_think, "degenerate": degen})
     valid = [o for o in outs if o["ratio"] is not None]
     med = lambda k: sorted(o[k] for o in outs)[len(outs)//2]
+    def block(sub):
+        v = [o for o in sub if o["ratio"] is not None]
+        m = lambda k: sorted(o[k] for o in sub)[len(sub)//2] if sub else None
+        return {"n_prompts": len(sub),
+                "mean_yue_ratio": sum(o["ratio"] for o in v)/len(v) if v else None,
+                "median_len": m("len"), "median_out_tokens": m("out_tokens"),
+                "degenerate_rate": sum(o["degenerate"] for o in sub)/len(sub) if sub else None}
     return {"no_think": no_think,
+            "first30": block(outs[:30]),   # 与 2026-09 已发布的 30 条口径逐项可比
+            "full": block(outs),
             "mean_yue_ratio": sum(o["ratio"] for o in valid)/len(valid) if valid else None,
             "median_len": med("len"),
             "median_out_tokens": med("out_tokens"),
@@ -287,6 +365,8 @@ def main():
                          "粤语纯度量到的是它的思考过程而不是它的回答")
     ap.add_argument("--hkmmlu-think", action="store_true",
                     help="选择题保留思维链（默认关掉；开着会把 <think> 当成答案位）")
+    ap.add_argument("--purity-limit", type=int, default=0,
+                    help="只跑前 N 条提问。0=全部（117 条）。传 30 可复现已发布口径")
     ap.add_argument("--purity-max-new", type=int, default=128,
                     help="生成长度上限。默认 128 与已发布口径一致；开思维链时必须调大，"
                          "否则会在 think 块中间截断，量到的是半截思考过程")
@@ -323,7 +403,7 @@ def main():
               f"解析不出={g.get('unparsed_rate')} 平均输出 token={g.get('mean_out_tokens')}", flush=True)
     if "purity" in tasks:
         res["purity"] = task_purity(tok, model, device, max_new_tokens=a.purity_max_new,
-                                    no_think=a.purity_no_think)
+                                    no_think=a.purity_no_think, limit=a.purity_limit)
         pu = res["purity"]
         print(f"[{a.name}] yue_ratio={pu['mean_yue_ratio']} 退化={pu['degenerate_rate']} "
               f"中位输出token={pu['median_out_tokens']} 中位think token={pu['median_think_tokens']} "
