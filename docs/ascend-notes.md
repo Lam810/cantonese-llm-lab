@@ -165,8 +165,12 @@ AttributeError: 'list' object has no attribute 'keys'
 不再存 `vocab.json` / `merges.txt` / `special_tokens_map.json`，老工具链会缺文件。
 
 **正确修法不是打补丁，而是把上游基座的完整分词器文件覆盖进合并产物**——LoRA 根本没动分词器。
-顺带注意：上游 Qwen3 把 chat template 嵌在 `tokenizer_config.json` 里，
-而 5.x 会额外写一个 `chat_template.jinja`，两者并存有歧义，应删掉后者。
+顺带注意 chat template 的存放位置：上游 Qwen3 把它嵌在 `tokenizer_config.json` 里
+（4168 字符），而 transformers 5.x 改成额外写一个 `chat_template.jinja`。
+**真正的失败模式不是"两者并存"，是"两者都没有"**——我按"删掉 .jinja"这条做过一次，
+而当时的 `tokenizer_config.json` 恰好是 5.x 写的精简版（693 字节、不含模板），
+结果模型彻底没有对话模板。正确做法是先确认 `tokenizer_config.json` 里有 `chat_template` 字段，
+没有就从上游基座补齐；两者并存且内容一致是安全的（≥4.49 优先读 `.jinja`）。
 
 ### 一个纯属自找的坑
 
@@ -174,8 +178,64 @@ AttributeError: 'list' object has no attribute 'keys'
 后来改了本机副本再 scp 覆盖过去，**把两个修复都冲掉了**，于是 `libatb.so` 的错误原封不动地复现。
 **脚本必须有唯一源头**，远端热修完要立刻同步回本地，否则下一次同步就是一次回退。
 
+## 图模式优化：三个配置的实测，结果是负的
+
+同一个 8B 模型（v2 bf16 合并权重）、24 条**互不相同**的 prompt 并发。
+用同一条 prompt 会吃到前缀缓存、吞吐虚高——上面那个 286 tok/s 就是这个毛病，不要跨表比。
+
+| 配置 | 结果 |
+|---|---|
+| **A 默认**（ACL Graph piecewise） | 24/24 成功，1298 tok / 2.8 s = **462.9 tok/s** |
+| **B `+DENSE_OPTIMIZE` `+MLP_OPTIMIZE`** | 24/24 成功，1287 tok / 2.9 s = **447.8 tok/s** |
+| **C torchair 图模式** | **起不来**，EngineCore 初始化失败 |
+
+**B 没有增益**（−3.3%，这个样本量下是噪声）。`VLLM_ASCEND_ENABLE_DENSE_OPTIMIZE=1`
+和 `VLLM_ASCEND_ENABLE_MLP_OPTIMIZE=1` 对 Qwen3-8B 这种稠密模型没起作用。
+
+**C 的报错指不到真因：**
+
+```
+TypeError: RotaryEmbedding.forward_native() takes from 3 to 4 positional arguments but 5 were given
+RuntimeError: Engine core initialization failed.
+```
+
+真因在 `vllm_ascend/ascend_config.py`：
+
+```python
+TORCHAIR_MODEL_LIST = ["deepseek", "pangu", "kimi_k2", "qwen"]
+
+def _check_torchair_supported(model_type: str):
+    for supported_model in TORCHAIR_MODEL_LIST:
+        if supported_model in model_type.lower():   # 子串匹配
+            return True
+    return False
+```
+
+Qwen3 dense 的 `model_type` 是 `qwen3`，`"qwen" in "qwen3"` 成立，**这道门把它放过去了**；
+但 `vllm_ascend/torchair/models/` 里只有 `qwen2.py` 和 `qwen3_moe.py`——**没有稠密 Qwen3 的实现**，
+于是落到通用路径上撞签名。这是"支持列表用子串匹配"造成的假阳性放行：
+白名单说支持，代码里没有。查这类问题要去看白名单旁边那个目录里到底有没有对应文件，
+而不是信白名单。
+
+**结论：对 Qwen3-8B 稠密模型，昇腾这边目前没有可用的图模式加速手段，默认的
+ACL Graph piecewise 已经是最好的配置。** 3.6 倍那个差距没有被压下来。
+
+## 昇腾原生量化：llmcompressor 根本没用上 NPU
+
+做 compressed-tensors 的 W8A8 时，日志第一行就写着：
+
+```
+dispatch_for_sequential | WARNING - CUDA/XPU is not available! Compressing model on CPU instead
+```
+
+`llmcompressor` 只认 CUDA/XPU，不认昇腾，于是整个 SmoothQuant + GPTQ 全在 CPU 上跑：
+**8B 模型、256 条校准样本，耗时 6 小时 43 分**（SmoothQuant 约 2 小时 10 分，
+GPTQ 约 4 小时 30 分）。NPU 在量化阶段完全空转，只有最后起服务验收时才用得上。
+要排这种作业，按 CPU 核数而不是按卡数估时间。
+
 ## 还没做的
 
-- 图模式 / 融合算子（`torch_npu` 的 `torchair`），预期是把 3.6 倍的差距压下来的主要手段
-- `vllm-ascend` 起 OpenAI 兼容服务（环境已就绪，未验证）
-- 训练侧（本文只验证了推理）
+- **训练侧**。本文只验证了推理与量化。
+- **W4A16 的实测**。W8A8 已出（见上），W4A16 还在跑。
+- 一个真正能用的 torchair 稠密 Qwen3 路径——需要上游补 `torchair/models/qwen3.py`，
+  不是配置能绕开的。
