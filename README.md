@@ -72,6 +72,7 @@ docs/data-licensing.md      為什麼合併語料不能再分發（四個來源�
 docs/publishing-logistics.md 把 16GB 權重從隔離集群搬到公開托管站：各段實測帶寬、只搬 adapter 的做法、逐字節驗證
 docs/                       復盤與昇騰筆記
 results/v2_results.md       v2（Qwen3-8B + LoRA）的訓練、合併體檢與評測，含一個被自己修掉的錯誤結論
+results/quantization.md     fp16 / int4 / int8 變體實測，以及「哪幾欄是噪聲不能當結論」
 results/                    評測數字
 ```
 
