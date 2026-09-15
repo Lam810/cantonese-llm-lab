@@ -77,7 +77,7 @@ Windows→WSL interop 两层损耗；同一条链路换成写 Linux 盘快一个
 （报"另一个程序正在使用此文件"）。
 
 **⑤ `~/.ssh/config` 里重复的 `Host` 块会静默生效。**
-ssh 对每个关键字取**最先出现**的值。我有两个 `Host cpu-tail` 块，顶部那个的 `ProxyJump`
+ssh 对每个关键字取**最先出现**的值。我有两个同名的 `Host <jump-host>` 块，顶部那个的 `ProxyJump`
 一直压着底部的真配置，于是"直连"其实一直在走双跳（2.5 KB/s）。
 `ssh -G <host>` 可以打印最终生效的配置，排查这类问题比读文件可靠。
 
