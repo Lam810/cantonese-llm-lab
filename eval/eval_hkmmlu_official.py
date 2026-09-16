@@ -100,7 +100,12 @@ def load_trans(trans_dir, n=0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True); ap.add_argument("--name", required=True)
-    ap.add_argument("--task", choices=["mc", "trans"], required=True)
+    ap.add_argument("--task", choices=["mc", "trans", "purity"], required=True)
+    ap.add_argument("--quantization", default="",
+                    help="传给 vLLM 的量化方法。昇腾原生格式要传 ascend——"
+                         "注意 config.json 里**不能**有 quantization_config，"
+                         "否则 vLLM 拿它当 quant_description、不再读 "
+                         "quant_model_description.json，查 embed_tokens 直接 KeyError")
     ap.add_argument("--hkmmlu-dir", default=""); ap.add_argument("--trans-dir", default="")
     ap.add_argument("--limit-per-cfg", type=int, default=0)
     ap.add_argument("--trans-n", type=int, default=0)
@@ -108,13 +113,19 @@ def main():
                     help="思维链模型要留够，否则会在 think 块中间截断、答案根本没出来")
     ap.add_argument("--max-model-len", type=int, default=4096)
     ap.add_argument("--gpu-util", type=float, default=0.85)
+    ap.add_argument("--purity-limit", type=int, default=0)
+    ap.add_argument("--purity-max-new", type=int, default=128)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
     from vllm import LLM, SamplingParams
-    llm = LLM(model=a.model, tensor_parallel_size=1, max_model_len=a.max_model_len,
+    kw = dict(model=a.model, tensor_parallel_size=1, max_model_len=a.max_model_len,
               gpu_memory_utilization=a.gpu_util, trust_remote_code=True)
+    if a.quantization: kw["quantization"] = a.quantization
+    llm = LLM(**kw)
     sp = SamplingParams(temperature=0.0, max_tokens=a.max_tokens)   # 贪心，可复算
+    _tk = llm.get_tokenizer()
+    tok_enc = lambda s: _tk.encode(s, add_special_tokens=False)
 
     res = {"name": a.name, "model": a.model, "task": a.task,
            "protocol": "HKMMLU official: zero-shot prompting (generation), greedy",
@@ -153,7 +164,39 @@ def main():
         print(f"[{a.name}] MC acc={m['overall_acc']:.4f} macro={m['macro_acc']:.4f} "
               f"解析失败={m['unparsed_rate']:.4f} 平均输出tok={m['mean_out_tokens']:.1f}", flush=True)
 
-    else:
+    elif a.task == "purity":
+        # 提问集与标记词表从 eval_yue 导入，不另抄一份——抄一份就不可比了
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from eval_yue import PURITY_PROMPTS, YUE_MARKERS, ZH_MARKERS, count_markers
+        prompts = PURITY_PROMPTS[:a.purity_limit] if a.purity_limit else PURITY_PROMPTS
+        sp2 = SamplingParams(temperature=0.0, max_tokens=a.purity_max_new)
+        outs = llm.chat([[{"role": "user", "content": p}] for p in prompts], sp2)
+        recs = []
+        for p, o in zip(prompts, outs):
+            raw = o.outputs[0].text
+            body = strip_think(raw)
+            y, z = count_markers(body, YUE_MARKERS), count_markers(body, ZH_MARKERS)
+            recs.append({"prompt": p, "response": body[:400], "yue": y, "zh": z,
+                         "ratio": (y / (y + z)) if (y + z) else None,
+                         "len": len(body), "out_tokens": len(o.outputs[0].token_ids),
+                         "think_tokens": (len(tok_enc(raw.split("</think>")[0]))
+                                          if "</think>" in raw else 0),
+                         "degenerate": bool(re.search(r"(.{6,})\1{2,}", body))})
+        def blk(sub):
+            v = [r for r in sub if r["ratio"] is not None]
+            med = lambda k: sorted(r[k] for r in sub)[len(sub) // 2] if sub else None
+            return {"n_prompts": len(sub),
+                    "mean_yue_ratio": (sum(r["ratio"] for r in v) / len(v)) if v else None,
+                    "median_len": med("len"), "median_out_tokens": med("out_tokens"),
+                    "median_think_tokens": med("think_tokens"),
+                    "degenerate_rate": (sum(r["degenerate"] for r in sub) / len(sub)) if sub else None}
+        res["purity"] = {"first30": blk(recs[:30]), "full": blk(recs), "samples": recs[:8]}
+        f30, fl = res["purity"]["first30"], res["purity"]["full"]
+        print(f"[{a.name}] 纯度(全{fl['n_prompts']}条)={fl['mean_yue_ratio']} "
+              f"退化={fl['degenerate_rate']} 中位tok={fl['median_out_tokens']} | "
+              f"前30条纯度={f30['mean_yue_ratio']}", flush=True)
+
+    elif a.task == "trans":
         import sacrebleu
         data = load_trans(a.trans_dir, a.trans_n)
         res["trans"] = {}

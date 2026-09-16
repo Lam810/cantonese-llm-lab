@@ -120,3 +120,59 @@ torchrun --standalone --nproc_per_node=4 train/train_yue_lora.py \
   --out runs/ablate-clean-2ep --rank 32 --alpha 64 --lr 1e-4 --epochs 2 \
   --bs 4 --accum 1 --max-len 1024 --eval-steps 400 --patience 3 --seed 42 --merge
 ```
+
+---
+
+## 发布时的三个工程坑（2026-09-17）
+
+把这一版发到 HF 的过程本身踩了三个坑，都值得记。
+
+### 1. `train_yue_lora.py --merge` 出来的分词器是坏的
+
+```
+tokenizer_config.json    693 B   ← transformers 5.x 写的精简版
+extra_special_tokens     list    ← 4.x 期望 dict
+chat_template            无      ← 只在独立的 .jinja 里
+vocab.json / merges.txt  缺
+```
+
+**这是第三次**（v2、int4、现在这一版）。正确修法不是打补丁，是**把上游基座的完整
+分词器文件覆盖进来**——LoRA 根本没动分词器。修完核对：内嵌模板 4168 字符、与
+`.jinja` 逐字一致。
+
+**流程结论：凡是从 `--merge` 路径出来的产物，分词器一定要重新体检一遍。**
+
+### 2. 这条路径不写 `merge_check.json`，合并体检那道闸门是空的
+
+`merge_lora.py` 会写，`train_yue_lora.py --merge` 不会。补测的结果：
+
+```
+399 张量 / 252 有改动（正好 36 层 × 7 投影，与 target_modules 吻合）
+最大 ‖ΔW‖/‖W‖ = 0.0383  (L33.mlp.gate_proj)
+前 5 名全是 L30~L34 的 mlp.gate_proj —— 结构化，没集中在单层
+```
+
+对照：健康区间 0.01–0.1；v2 是 0.0782（步数多 2.6 倍，差不多两倍关系，合理）；
+**v1 发散那次是 0.50–1.06 全压在最后 5 层的 `q_proj`**。这一版跟 v1 完全不是一回事。
+
+### 3. HF 的 git-lfs 路径有 5 GB 单文件上限
+
+```
+You need to configure your repository to enable upload of files > 5GB.
+Run "hf lfs-enable-largefiles ./path/to/your/repo" and try again.
+```
+
+16.4 GB 的单文件推不上去。绕它要用 `hf lfs-enable-largefiles` 注册一个 multipart
+传输代理（需要 Python 版 hf CLI）；**分片是更干净的做法**，而且 HF 的惯例本来就是
+≤5 GB 一片、分片后能局部下载。切成 4 片（最大 3.95 GiB）+ `model.safetensors.index.json`。
+
+注意仓库里已有的 15.27 GiB 单文件是走 **HTTP API**（`huggingface_hub.upload_file`）
+传的，那条路没有 5 GB 限制——**两条上传路径的限制不一样**。
+
+切完必须验，这和验 LoRA 合并是同一个纪律（脚本：`deploy/verify_shards.py`）：
+
+```
+原文件张量 399 | 索引张量 399 | 集合一致 True
+抽检 5/5 逐字节相同（含最大的 lm_head/embed_tokens、最小的 k_norm、跨三个分片）
+字节数 原 16381517208 / 分片合计 16381516744 / 差 -464（header 对齐开销）
+```
