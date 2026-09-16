@@ -6,7 +6,8 @@
 1pp 级别的差异，独立检验分辨不了。
 
 用法：
-  compare_models.py A.json B.json [C.json ...]        # 两两对比，第一个作基准
+  compare_models.py [--key mc] A.json B.json [C.json ...]   # 两两对比，第一个作基准
+  --key 指定结果 JSON 里放逐题预测的那一节：hkmmlu（默认，logprob 口径）或 mc（官方生成口径）
 """
 import json, math, sys, random
 
@@ -54,11 +55,15 @@ def mcnemar(a, b):
             "chi2_cc": chi2, "p_exact": binom_two_sided(n01, n10)}
 
 def main():
-    files = sys.argv[1:]
+    args = sys.argv[1:]
+    key = "hkmmlu"
+    if args and args[0] == "--key":
+        key = args[1]; args = args[2:]
+    files = args
     if len(files) < 2: sys.exit(__doc__)
     ds = [(f, json.load(open(f, encoding="utf-8"))) for f in files]
     base_f, base_d = ds[0]
-    base = flat(base_d)
+    base = flat(base_d, key)
     if not base: sys.exit(f"{base_f} 里没有逐题预测（preds）——要用新版 eval_yue.py 重跑")
     print(f"基准：{base_d.get('name')}   n={len(base)}   ({base_f})")
     hdr = "%-32s %9s %20s %8s %10s %10s  %s" % (
@@ -66,7 +71,7 @@ def main():
     print(hdr); print("-" * len(hdr))
     out = {}
     for f, d in ds[1:]:
-        o = flat(d)
+        o = flat(d, key)
         name = d.get("name", "?")
         if not o:
             print("%-32s  (没有逐题预测，跳过)" % name); continue
