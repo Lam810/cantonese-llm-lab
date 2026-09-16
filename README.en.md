@@ -5,7 +5,7 @@
 Engineering notes on **fine-tuning, evaluating, and porting a Cantonese LLM to Ascend NPUs**,
 with directly reusable scripts.
 
-Four things accumulated here: an evaluation suite that needs no LLM judge, a LoRA health-check
+Four things are collected here: an evaluation suite that needs no LLM judge, a LoRA health-check
 tool, a multi-source Cantonese SFT data rebuild script, and a record of moving the same
 inference scripts onto an Ascend 910C.
 
