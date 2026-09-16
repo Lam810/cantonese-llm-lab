@@ -21,6 +21,45 @@ Construction and Large Language Model Evaluation, **Grant No. 25ZD03**.
 
 ---
 
+## Latest results (2026-09-16)
+
+**1. Head-to-head against existing Cantonese LLMs: we rank first, with one loss.**
+Six existing Cantonese models plus the base, on the full HKMMLU (26,368 questions),
+117 generation prompts, two protocols (thinking off/on, each model scored at its own best),
+with McNemar paired tests:
+
+| Each model at its own best protocol | HKMMLU |
+|---|---|
+| **This project** | **0.6227** |
+| `CantoneseLLMChat-v1.0-7B` | 0.6045 |
+| `Qwen2-Cantonese-7B-Instruct` | 0.5932 |
+| `Qwen3-8B` (base) | 0.5789 |
+| `CantoneseLLM-v2.0-8B-Thinking` | 0.5485 |
+| `Llama-3-Cantonese-8B-Instruct` | 0.5294 |
+| `v2.0-8B-Chat-Vector-Merged` | 0.4612 |
+
+Written-Cantonese purity and output length also come first (median **51** tokens; the
+longest competitor runs to 583). **But we lose on Cantonese-Wikipedia perplexity to
+`CantoneseLLMChat-v1.0-7B` (7.77 vs 13.45)** — they did continued pre-training, we only
+did LoRA SFT. Put plainly: theirs is a *Cantonese language model*, ours is a
+*question-answering model that writes Cantonese*.
+See [`results/sota_comparison.md`](results/sota_comparison.md).
+
+**2. The published data subset trains a better model than the full corpus.**
+For licensing reasons, only 27,207 of the 71,202 examples can be redistributed. The
+assumption was that the public release is a cut-down version — **the measurement says the
+opposite**: training on only those 27,207 gives **+1.19pp on HKMMLU (p=6.0e-7)** and higher
+purity. The 62% that cannot be redistributed was not helping; it was holding the model back.
+See [`results/ablation_clean_data.md`](results/ablation_clean_data.md).
+
+**3. Two previously published numbers are corrected.** Under the tighter protocol, the
+HKMMLU gain goes from +3.94pp (3300-question sample) to **+2.29pp** (full 26,368), and
+Cantonese purity from 0.9591 (30 prompts) to **0.8975** (117 prompts). The gain itself is
+still highly significant (p=1.3e-14); it is simply smaller than first reported.
+See the correction section in [`results/v2_results.md`](results/v2_results.md).
+
+---
+
 ## Main findings
 
 **1. Without a validation set, an SFT training-loss curve proves nothing.**
@@ -98,6 +137,11 @@ docs/publishing-logistics.md Moving 16 GB of weights from an isolated cluster to
 results/v1_vs_base.md       v1 against its base
 results/v2_results.md       v2 (Qwen3-8B + LoRA) training, merge health check, and evaluation,
                             including one wrong conclusion that was later corrected
+results/sota_comparison.md  Head-to-head against 6 existing Cantonese models
+                            (two protocols + paired tests)
+results/ablation_clean_data.md
+                            Ablation: training on only the published 27,207 examples
+                            gives a *better* model
 results/quantization.md     Measured fp16 / int4 / int8 variants, and which columns are noise
                             and must not be read as results
 ```

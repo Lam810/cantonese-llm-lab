@@ -18,6 +18,40 @@
 
 ---
 
+## 最新结果（2026-09-16）
+
+**一、同基座横向对照：我们排第一，但有一项输。**
+拉了 6 个现有粤语模型 + 基座，全量 HKMMLU（26,368 题）、117 条生成提问、两种口径
+（关/开思维链，每个模型取它自己最优那个）、McNemar 配对检验：
+
+| 每个模型取自己最优口径 | HKMMLU |
+|---|---|
+| **本项目** | **0.6227** |
+| `CantoneseLLMChat-v1.0-7B` | 0.6045 |
+| `Qwen2-Cantonese-7B-Instruct` | 0.5932 |
+| `Qwen3-8B`（基座） | 0.5789 |
+| `CantoneseLLM-v2.0-8B-Thinking` | 0.5485 |
+| `Llama-3-Cantonese-8B-Instruct` | 0.5294 |
+| `v2.0-8B-Chat-Vector-Merged` | 0.4612 |
+
+书面粤语纯度、输出长度也都第一（中位 **51** token，对手最高到 583）。
+**但粤语维基困惑度输给 `CantoneseLLMChat-v1.0-7B`（7.77 vs 13.45）**——
+他们做的是继续预训练，我们只做 LoRA SFT。诚实讲：他们的是「粤语语言模型」，
+我们的是「会说粤语的问答模型」。详见 [`results/sota_comparison.md`](results/sota_comparison.md)。
+
+**二、公开出去的数据子集，比完整语料训得更好。**
+授权原因，71,202 条里只有 27,207 条可再分发。原本以为公开那份是「阉割版」——
+**实测是相反**：只用公开的 27,207 条训，HKMMLU **高 1.19pp（p=6.0e-7）**、纯度也更高。
+那 62% 不能再分发的数据不仅没帮上忙，而且在拖后腿。
+详见 [`results/ablation_clean_data.md`](results/ablation_clean_data.md)。
+
+**三、两个已发布的数字要更正。** 口径改严之后：HKMMLU 增益从 +3.94pp（抽 3300 题）
+变成 **+2.29pp**（全量 26,368 题）；粤语纯度从 0.9591（30 条提问）变成
+**0.8975**（117 条提问）。增益本身极显著（p=1.3e-14），只是幅度比原先报的小。
+见 [`results/v2_results.md`](results/v2_results.md) 的口径更正一节。
+
+---
+
 ## 主要结论
 
 **1. 没有验证集的 SFT，训练 loss 曲线不能证明任何事。**
@@ -80,6 +114,9 @@ docs/publishing-logistics.md 把 16GB 权重从隔离集群搬到公开托管站
 results/v1_vs_base.md       v1 与基座的对照
 results/v2_results.md       v2（Qwen3-8B + LoRA）的训练、合并体检与评测，
                             含一个被自己修掉的错误结论
+results/sota_comparison.md  与 6 个现有粤语模型的横向对照（两种口径＋配对检验）
+results/ablation_clean_data.md
+                            消融：只用公开发布的 27,207 条，训出来反而更好
 results/quantization.md     fp16 / int4 / int8 变体实测，以及「哪几栏是噪声不能当结论」
 ```
 

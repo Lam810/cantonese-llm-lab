@@ -1,0 +1,192 @@
+# 和现有粤语 LLM 的对照：我们排第几
+
+> 2026-09-16。7 个模型、两种口径、全量 HKMMLU（26,368 题）、117 条生成提问、配对检验。
+> 所有数字都可复算，脚本在 `eval/`。
+
+## 一句话结论
+
+**在 8B 级粤语模型里，同时做到「HKMMLU 第一 + 书面粤语纯度第一 + 输出最短 + 不依赖思维链」
+的只有本模型。但单看粤语语言建模能力（粤语维基困惑度），我们输给 CantoneseLLMChat-v1.0-7B
+（7.77 vs 13.45）。**
+
+诚实的表述是：**他们的是「粤语语言模型」，我们的是「会说粤语的问答模型」。**
+他们做的是继续预训练（CPT），我们只做了 LoRA SFT——这个差别在 PPL 上看得很清楚。
+
+## 对照组怎么选
+
+HF 上搜 `cantonese` / `yue` 的 text-generation 模型，按下载量取前列，剔掉误命中
+（`m-a-p/YuE-*` 是音乐生成模型，不是粤语）。最后 6 个对照 + 基座：
+
+| 模型 | 大小 | 基座 | 授权 | 为什么选它 |
+|---|---|---|---|---|
+| `hon9kon9ize/CantoneseLLM-v2.0-8B-Thinking` | 15.3 GiB | Qwen3-8B | apache-2.0 | **同基座直接对手** |
+| `hon9kon9ize/CantoneseLLM-v2.0-8B-Thinking-Chat-Vector-Merged` | 15.3 GiB | Qwen3-8B | apache-2.0 | 他们主推的那个（下载量更高） |
+| `hon9kon9ize/CantoneseLLMChat-v1.0-7B` | 14.2 GiB | 自家 CPT | apache-2.0 | 上一代，看代际差 |
+| `lordjia/Qwen2-Cantonese-7B-Instruct` | 14.2 GiB | Qwen2-7B | apache-2.0 | 另一条技术路线 |
+| `lordjia/Llama-3-Cantonese-8B-Instruct` | 15.0 GiB | Llama-3-8B | llama3 | 另一个基座家族 |
+| `Qwen/Qwen3-8B` | 15.3 GiB | — | apache-2.0 | 基座参照 |
+
+**注意授权：对手全是 apache-2.0，我们是 cc-by-nc-4.0**（训练数据含 CC-BY-NC 成分）。
+这在采用率上是实打实的劣势，不是技术问题。
+
+## 两种口径，为什么必须都跑
+
+对手里有两个是**专门为思维链训练的**（名字里带 Thinking）。用「比较第一个 token 的
+A/B/C/D logprob」量它们是**错的**——Qwen3 系默认开思维链，第一个 token 是 `<think>`，
+量到的是「它想先想一想」。
+
+这个坑我在自己的基座上踩过一次（把基座量成 0.2888 近随机，真值 0.5700，一度把增益
+写成 +31.85pp）。**在对手身上踩会变成不诚实的对比**，所以两种口径都跑，
+每个模型取它自己最优的那个，两列都公开。
+
+- **口径 A 关思维链**：HKMMLU 首 token logprob，全量 26,368 题
+- **口径 B 开思维链**：HKMMLU 改生成式（让它把推理生成完，再从末尾解析答案），
+  每 config 取 10 题 n≈660；解析不出来的单独记 `unparsed_rate`，**不静默算错**
+
+## 口径 A：关思维链（全量 26,368 题）
+
+| 模型 | HKMMLU | macro | 95%CI 宽 | 纯度117 | 退化 | 中位tok | PPL留出 | PPL维基 |
+|---|---|---|---|---|---|---|---|---|
+| **ours** | **0.6019** | **0.6075** | ±1.17pp | **0.8975** | **0.009** | 90 | **9.07** | 13.45 |
+| `Qwen2-Cantonese-7B` | 0.5932 | 0.5824 | ±1.21pp | 0.7791 | 0.009 | 125 | 13.03 | 13.26 |
+| `CantoneseLLMChat-v1.0-7B` | 0.5904 | 0.5853 | ±1.22pp | 0.5348 | 0.009 | 127 | 10.12 | **7.77** |
+| `Qwen3-8B`（基座） | 0.5789 | 0.5799 | ±1.21pp | 0.0739 | 0.026 | 128 | 23.89 | 21.34 |
+| `Llama-3-Cantonese-8B` | 0.5294 | 0.4901 | ±1.21pp | 0.5268 | 0.009 | 128 | 14.73 | 12.38 |
+| `v2.0-8B-Chat-Vector-Merged` | 0.4612 | 0.4578 | ±1.22pp | 0.1674 | 0.068 | 128 | 19.42 | 16.11 |
+| `v2.0-8B-Thinking` | 0.3136 | 0.2942 | ±1.13pp | 0.8088 | 0.068 | 128 | 12.55 | 11.54 |
+
+**配对检验（McNemar 精确版，n=26,368，基准 = ours）：**
+
+```
+vs Qwen2-Cantonese-7B        +0.87pp  [+0.26,+1.49]  p=7.2e-3   显著
+vs CantoneseLLMChat-v1.0-7B  +1.15pp  [+0.50,+1.82]  p=6.8e-4   显著
+vs Qwen3-8B（基座）          +2.29pp  [+1.70,+2.88]  p=1.3e-14  显著
+vs Llama-3-Cantonese-8B      +7.25pp  [+6.61,+7.93]  p=1.7e-97  显著
+vs v2.0-8B-Chat-Vector      +14.07pp                 p≈0        显著
+vs v2.0-8B-Thinking         +28.83pp                 p≈0        ⚠️ 这个数字不能当战绩
+```
+
+配对检验而不是两个独立比例的 z 检验：所有模型答的是同一批题，对错是配对的。
+独立检验会把题目难度的方差算进去，白白损失功效。
+
+## 口径 B：开思维链（HKMMLU 生成式，n≈660）
+
+| 模型 | HKMMLU | 解析失败 | 纯度117 | 退化 | 中位tok | 中位think | 出think率 |
+|---|---|---|---|---|---|---|---|
+| **ours** | **0.6227** | 0.006 | **0.9170** | 0.026 | **51** | **0** | **0.00** |
+| `CantoneseLLMChat-v1.0-7B` | 0.6045 | 0.003 | 0.5311 | 0.017 | 127 | 0 | 0.00 |
+| `Qwen2-Cantonese-7B` | 0.5561 | 0.008 | 0.7698 | 0.017 | 125 | 0 | 0.00 |
+| `v2.0-8B-Thinking` | 0.5485 | 0.059 | 0.9136 | 0.017 | 583 | 141 | **1.00** |
+| `Qwen3-8B`（基座） | 0.5167 | 0.036 | 0.0509 | 0.034 | 768 | 432 | 0.96 |
+| `Llama-3-Cantonese-8B` | 0.4697 | 0.029 | 0.4989 | 0.051 | 370 | 0 | 0.00 |
+| `v2.0-8B-Chat-Vector-Merged` | 0.3939 | **0.120** | 0.0404 | 0.094 | 768 | 479 | 0.93 |
+
+## 每个模型取它自己最优的口径
+
+```
+ours                             0.6227   (开思维链)
+CantoneseLLMChat-v1.0-7B         0.6045   (开思维链)
+Qwen2-Cantonese-7B-Instruct      0.5932   (关思维链)
+Qwen3-8B（基座）                 0.5789   (关思维链)
+CantoneseLLM-v2.0-8B-Thinking    0.5485   (开思维链)
+Llama-3-Cantonese-8B-Instruct    0.5294   (关思维链)
+v2.0-8B-Chat-Vector-Merged       0.4612   (关思维链)
+```
+
+---
+
+## 五点必须如实标注的
+
+### 1. 那个 +28.83pp 是格式产物，不是能力差距
+
+`CantoneseLLM-v2.0-8B-Thinking` 的 chat template **不支持关闭思维链**。我们的兜底做法
+（在模板后追加空的 `<think>\n\n</think>`）对它无效，第一个 token 仍然是 `<think>`，
+于是首 token logprob 量到的是「它想先想一想」，0.3136 接近随机基线 0.25。
+
+**它的真实能力是 0.5485**（开思维链生成式口径）。我们赢 **7.4pp**，不是 28.8pp。
+把 28.8pp 写成战绩是不诚实的。
+
+**但「无法关闭思维链」本身是真实的部署缺陷**，不是测量错误。在不能用思维链的场景
+（短回答、低延迟、按 token 计费、边缘设备）它没法用，这才是这条对比的真正内容。
+
+### 2. 粤语语言建模我们输了
+
+`CantoneseLLMChat-v1.0-7B` 的粤语维基困惑度 **7.77**，我们 **13.45**，差 1.7 倍。
+粤语维基是**训练完全没用过**的分布外语料，这一列没有任何取巧空间。
+
+他们做的是继续预训练（CPT），我们是 LoRA SFT。想在这一列追上，得改配方，不是调参。
+
+### 3. 他们主推的那个版本几乎不写粤语
+
+`v2.0-8B-Thinking-Chat-Vector-Merged` 的下载量比 Thinking 版还高，但纯度只有
+**0.1674**（关）/ **0.0404**（开），解析失败率 **12%**，退化率 0.094。
+chat-vector 合并把粤语语域洗掉了。同一个提问：
+
+```
+提问：你可唔可以解釋下咩係強積金？
+
+ours                 （yue=17 zh=1  ratio=0.944）
+  強積金係強制性嘅退休保障制度，係香港政府於2000年推出嘅。強積金嘅目標係為香港市民
+  提供一個退休保障，確保佢哋喺退休後可以有足夠嘅錢生活……
+
+v2.0-8B-Chat-Vector  （yue=0  zh=14 ratio=0.000）
+  當然可以！「強積金」（Mandatory Provident Fund，簡稱MPF）是香港政府為保障打工仔
+  的退休生活而設立的一個強制性退休保障計劃。以下是我為你整理的解釋……
+```
+
+### 4. 纯度这个指标有一个已知的偏差，对我们**不利**方向上没被利用
+
+`ratio = 粤语虚词 /（粤语虚词 + 普通话虚词）`。问题是**低虚词密度的输出更容易拿到 1.000**。
+同一个提问：
+
+| 模型 | 粤语虚词 | 普通话虚词 | ratio |
+|---|---|---|---|
+| ours | **17** | 1 | 0.944 |
+| `v2.0-8B-Thinking` | 10 | 0 | **1.000** |
+| `CantoneseLLMChat-v1.0-7B` | 8 | 0 | **1.000** |
+
+对手拿到满分 1.000，我们因为一个「的」扣到 0.944——但我们的粤语虚词**绝对密度最高**
+（17 vs 10 vs 8）。`v2.0-8B-Thinking` 的输出是 markdown 标题堆砌
+（`## 強積金（MPF）概覽` / `### 核心概念`），结构词多、虚词少，所以分母小。
+
+**换句话说：均值口径的纯度对比略微不利于我们，我们仍然是第一。**
+要更严的版本，应该同时报虚词绝对密度。这一点记在这里，没有改指标去凑结果。
+
+### 5. 退化率是并列第一，不是独占
+
+关思维链口径 0.009（117 条里 1 条），和 `Qwen2-Cantonese-7B` / `CantoneseLLMChat-v1.0-7B`
+/ `Llama-3-Cantonese-8B` 完全并列。**这一栏 117 条的分辨率是 1/117 = 0.0085，
+差一条就是一格，不要拿它排序。**
+
+---
+
+## 一个顺带发现：5.x 存的分词器，4.x 读不了，这事在别人模型上也一样
+
+6 个对照模型里有 **2 个**（两个 `-Thinking`）的 `tokenizer_config.json` 只有 664 字节：
+`extra_special_tokens` 是 list（transformers 4.x 期望 dict），而且 chat template 在独立的
+`chat_template.jinja` 里、没有内嵌。
+
+- 评测集群的 transformers 是 **5.6.2**，读得了，**对照评测不受影响**；
+- 昇腾侧 vllm 环境是 **4.57.1**，直接 `AttributeError: 'list' object has no attribute 'keys'`。
+
+**先确认影响范围再修，不要见一个修一个。** 修的时候必须用模型**自己那份** chat template
+——模板会改变输出行为，拿别的模型的顶上去，对比就不成立了。
+
+## 复现
+
+```bash
+# 口径 A
+python eval/eval_yue.py --model <路径> --name <名字>_nothink \
+   --tasks hkmmlu,purity,ppl --hkmmlu-dir $LAB_ROOT/data/HKMMLU --limit-per-cfg 0 \
+   --purity-no-think --purity-max-new 128 \
+   --corpora "heldout=...,wiki=..." --corpus-limit 2000 --out <输出>.json
+
+# 口径 B
+python eval/eval_yue.py --model <路径> --name <名字>_think \
+   --tasks purity --hkmmlu-think --hkmmlu-gen --hkmmlu-gen-limit 10 \
+   --gen-max-new 512 --gen-batch 8 --purity-max-new 768 --out <输出>.json
+
+# 配对检验与汇总
+python eval/compare_models.py ours_nothink.json <其他>_nothink.json ...
+python eval/summarize_rivals.py <结果目录>
+```

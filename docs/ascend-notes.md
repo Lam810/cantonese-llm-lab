@@ -233,9 +233,43 @@ dispatch_for_sequential | WARNING - CUDA/XPU is not available! Compressing model
 GPTQ 约 4 小时 30 分）。NPU 在量化阶段完全空转，只有最后起服务验收时才用得上。
 要排这种作业，按 CPU 核数而不是按卡数估时间。
 
+## 昇腾侧量化：能用的方案全都要量化激活
+
+`vllm_ascend/quantization/` 里支持的全部方案：
+
+```
+w8a8.py   w8a8_dynamic.py   w4a8_dynamic.py   w4a4_flatquant_dynamic.py
+→ W8A8 / W8A8_DYNAMIC / W4A8_DYNAMIC / W4A4_FLATQUANT_DYNAMIC
+```
+
+**没有任何 weight-only 选项**（没有 W8A16、没有 W4A16）。而实测下来，
+**动激活是伤得最重的那一刀**：int4（权重-only，NF4）HKMMLU 只掉 1.85pp，
+W8A8（权重+激活）掉 **6.67pp**，直接低于基座——尽管位宽更高、体积还大 55%。
+
+还有一件事：`llmcompressor` 出的 compressed-tensors **vllm-ascend 根本不认**。
+只要检测到 NPU，`override_quantization_method` 就无条件劫持成昇腾自己的方法，
+而它只读 `quant_model_description.json`（ModelSlim 格式，每个权重前缀都要有记录）。
+补描述文件也不行——张量布局都不一样。
+
+**结论：昇腾侧目前该用的是已经验证过的 bf16。** 详见
+[`../results/quantization.md`](../results/quantization.md)。
+
+### 顺带：5.x 存的分词器坑，在别人的模型上也一样
+
+上面那条「transformers 5.x 存的分词器 4.x 读不了」不是我们 merge 的特例。
+从 HF 拉的 6 个粤语对照模型里有 **2 个**是同一个毛病：`tokenizer_config.json`
+只有 664 字节、`extra_special_tokens` 是 list、chat template 在独立的 `.jinja` 里。
+
+**先确认影响范围再动手**：评测集群的 transformers 是 5.6.2，读得了，完全不受影响；
+只有昇腾侧 vllm 环境（4.57.1）会崩。修的时候必须用模型**自己那份** chat template
+——模板会改变输出行为，拿别的模型的顶上去，横向对比就不成立了。
+
 ## 还没做的
 
 - **训练侧**。本文只验证了推理与量化。
-- **W4A16 的实测**。W8A8 已出（见上），W4A16 还在跑。
+- **msmodelslim（昇腾自家量化工具）的实测**。它出的才是 vllm-ascend 认的格式，
+  而且它认 NPU（`dev_type='npu'`），不像 llmcompressor 只能跑 CPU。环境已铺好、
+  `Calibrator`/`QuantConfig` 已验证可导入，但按上面的证据，预期它也逃不过
+  "量化激活就掉点"这一条。
 - 一个真正能用的 torchair 稠密 Qwen3 路径——需要上游补 `torchair/models/qwen3.py`，
   不是配置能绕开的。
