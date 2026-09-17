@@ -44,16 +44,23 @@ MODELS=(
 )
 STYLES=(legacy yue_strict)
 
+# 一个 die 一条**串行**队列。不能把 16 个 (模型,提示词) 任务铺成 16 个并行进程：
+# 每个 vLLM 实例按 --gpu-util 0.85 占掉 85% 的 die 显存，同一个 die 上第二个进程
+# 起来时只剩 15%，直接 `NPU out of memory ... 5.02 MiB free`。作业 137923 第一版
+# 就是这么挂的——8 个 legacy 抢到显存正常跑，8 个 yue_strict 全部 OOM，
+# 而报错顶层还是那句没信息量的 "Engine core initialization failed"。
 run_one () {
-  local G=$1 N=$2 M=$3 S=$4
+  local G=$1 N=$2 M=$3
   [ -f "$M/config.json" ] || { echo "!! 跳过 $N：$M 没有 config.json"; return 1; }
-  local OUT=$L/results/$S/${N}_mc.json
-  [ -f "$OUT" ] && { echo "· $N/$S 已有结果，跳过"; return 0; }
-  ASCEND_RT_VISIBLE_DEVICES=$G $E/bin/python $L/code/eval_hkmmlu_official.py \
-     --model "$M" --name "$N" --task mc --hkmmlu-dir $L/data/HKMMLU \
-     --limit-per-cfg 0 --max-tokens 512 --mc-style "$S" --gpu-util 0.85 --out "$OUT" \
-     > $L/logs/grid/${N}_${S}.log 2>&1
-  RC=$?; echo "[$(date +%H:%M:%S)] $N/$S rc=$RC (die$G)"   # RC 先存：$(date) 会冲掉 $?
+  for S in "${STYLES[@]}"; do
+    local OUT=$L/results/$S/${N}_mc.json
+    [ -f "$OUT" ] && { echo "· $N/$S 已有结果，跳过"; continue; }
+    ASCEND_RT_VISIBLE_DEVICES=$G $E/bin/python $L/code/eval_hkmmlu_official.py \
+       --model "$M" --name "$N" --task mc --hkmmlu-dir $L/data/HKMMLU \
+       --limit-per-cfg 0 --max-tokens 512 --mc-style "$S" --gpu-util 0.85 --out "$OUT" \
+       > $L/logs/grid/${N}_${S}.log 2>&1
+    RC=$?; echo "[$(date +%H:%M:%S)] $N/$S rc=$RC (die$G)"   # RC 先存：$(date) 会冲掉 $?
+  done
 }
 
 # 不能写死 die 0..7：同节点上有别的作业（包括自己的）占着 die 0 时，Slurm 分给
@@ -64,18 +71,11 @@ DEVS=(${ASCEND_RT_VISIBLE_DEVICES//,/ })
 NDEV=${#DEVS[@]}
 echo "Slurm 给的 die: ${DEVS[*]}  (共 $NDEV)"
 
-# 16 个 (模型,提示词) 任务铺在 NDEV 个 die 上。把慢模型（思维链那三个，
-# 平均输出 450+ tok）的两个臂分到不同 die，别让它们在同一条队列里串起来。
-TASKS=()
-for S in "${STYLES[@]}"; do
-  for spec in "${MODELS[@]}"; do TASKS+=("$S|$spec"); done
-done
-
 i=0; PIDS=""
-for t in "${TASKS[@]}"; do
-  S="${t%%|*}"; rest="${t#*|}"; N="${rest%%|*}"; M="${rest#*|}"
-  run_one "${DEVS[$((i % NDEV))]}" "$N" "$M" "$S" &
-  PIDS="$PIDS $!"; i=$((i+1)); sleep 12
+for spec in "${MODELS[@]}"; do
+  N="${spec%%|*}"; M="${spec#*|}"
+  run_one "${DEVS[$((i % NDEV))]}" "$N" "$M" &
+  PIDS="$PIDS $!"; i=$((i+1)); sleep 15
 done
 for p in $PIDS; do wait $p; done      # 裸 wait 会等到常驻进程，逐个等
 
