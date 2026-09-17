@@ -1,4 +1,4 @@
-# cantonese-llm-lab — Cantonese LLM fine-tuning, evaluation, and Ascend NPU porting
+# Cantonese-LLM-Lab — Cantonese LLM fine-tuning, evaluation, and Ascend NPU porting
 
 [粵語](README.md) · [简体中文](README.zh-CN.md) · **English**
 

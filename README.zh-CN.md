@@ -1,4 +1,4 @@
-# cantonese-llm-lab — 粤语大模型微调、评测与昇腾国产卡适配
+# Cantonese-LLM-Lab — 粤语大模型微调、评测与昇腾国产卡适配
 
 [粵語](README.md) · **简体中文** · [English](README.en.md)
 
