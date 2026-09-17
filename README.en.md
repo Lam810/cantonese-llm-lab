@@ -2,23 +2,23 @@
 
 [粵語](README.md) · [简体中文](README.zh-CN.md) · **English**
 
-Engineering notes on **fine-tuning, evaluating, and porting a Cantonese LLM to Ascend NPUs**,
-with directly reusable scripts.
+This project covers **fine-tuning, evaluating, and porting a Cantonese LLM to Ascend NPUs**,
+with reusable scripts.
 
-Six things are collected here:
-1. **An evaluation suite that needs no LLM judge** — HKMMLU under the official protocol on the
+The repository contains six components:
+1. **An evaluation suite without an LLM judge** — HKMMLU under the official protocol on the
    full set, the official yue↔zh translation tasks, written-Cantonese purity, degeneration
    detection, and perplexity, all paired per question with exact McNemar tests;
-2. **A way to ablate the prompt** — a 2×2 (language × format scaffold) that settles whether a
-   ranking was chosen by the prompt;
-3. **A release gate** — a non-inferiority test (not a significance test) plus a δ-sensitivity
-   self-check;
-4. **A LoRA health-check tool** — per-module ‖ΔW‖/‖W‖;
+2. **A prompt-ablation design** — a 2×2 (language × format scaffold) for testing whether a
+   ranking is attributable to the prompt;
+3. **A release gate** — a non-inferiority test (rather than a significance test) plus a
+   δ-sensitivity check;
+4. **A LoRA diagnostic tool** — per-module ‖ΔW‖/‖W‖;
 5. **A multi-source Cantonese SFT data rebuild script** — script normalisation, two-level
    deduplication, split-before-train;
 6. **A record of porting to Ascend 910C** — four lines of code changed coming from CUDA, plus
-   native W8A8 quantization, a **negative result** on graph-mode optimisation, and a pile of
-   traps where the error message does not point at the cause.
+   native W8A8 quantization, a **negative result** on graph-mode optimisation, and several cases
+   where the error message does not identify the underlying cause.
 
 ---
 
@@ -48,15 +48,15 @@ Construction and Large Language Model Evaluation, **Grant No. 25ZD03**.
 | 8 | `v2.0-8B-Thinking-Chat-Vector-Merged` | 0.3968 | ±0.59pp | 0.0736 | 493 |
 
 Paired McNemar against the leader: **−5.03pp** (95% CI [−5.68, −4.37], p = 1.6e-51).
-**Not noise.**
+The difference is statistically significant.
 
-**And this ranking is stable.** We ran a full 2×2 over the prompt (language × format
+**The ranking remains stable under prompt ablation.** We ran a full 2×2 over the prompt (language × format
 scaffold) plus two sample sizes = **8 combinations, and the rival wins every one of them**.
 Even letting each model be scored at its own best arm: `chat_7b` 0.6018 > `qwen2` 0.5889 >
 this project 0.5767. See [`results/prompt_ablation.md`](results/prompt_ablation.md).
 
-**2. Official translation tasks: the two directions rank in opposite orders. This is the
-most informative result here.**
+**2. Official translation tasks: the two directions rank in opposite orders. This result
+distinguishes the capabilities measured in the two directions.**
 
 | | yue→zh chrF | zh→yue chrF |
 |---|---|---|
@@ -72,7 +72,7 @@ number is 4th, but the official references are **Simplified** while our output i
 register was converted correctly throughout (喺→在, 同→和, 係→是, 嘅→的) yet scored near
 zero purely on orthography.
 
-**3. Our real weakness is instruction following — not knowledge, not comprehension.**
+**3. The primary limitation is instruction following — not knowledge or comprehension.**
 
 | Evidence | Figure |
 |---|---|
@@ -80,40 +80,40 @@ zero purely on orthography.
 | Share of the gain from one added format-scaffold sentence that is purely recovered parse failures | **32%**, highest of all 8 models (base 4%, Thinking 12%) |
 | Traditional-script output rate on yue→zh | **99.7%** (the prompt explicitly asks for Simplified; rival: 5.0%) |
 
-Three independent sources, all pointing the same way. **And the location of the weakness is
-pinpointed by the intervention that repairs it**: adding the scaffold drops our unparsed rate
+Three independent sources point in the same direction. **The corresponding intervention also
+localizes the primary limitation**: adding the scaffold drops our unparsed rate
 from 4.42% to 0.62% (−86%), while switching to a Cantonese prompt only reaches 4.01%
 (essentially unchanged). **The next training round needs format-following data, not more
 Cantonese text.**
 
-Two axes where we genuinely lose: `hk_*` (Hong Kong local knowledge) 0.5334, second-worst of
+Performance is lower on two axes: `hk_*` (Hong Kong local knowledge) 0.5334, second-worst of
 the eight (leader 0.6243); and Cantonese-Wikipedia perplexity 13.45 against 7.77 for
 `CantoneseLLMChat-v1.0-7B` — they did continued pre-training (CPT), we only did LoRA SFT.
-Put plainly: **theirs is a Cantonese *language model*, ours is a question-answering model
-that writes Cantonese**, and the two translation directions quantify exactly that.
+This reflects the different training objectives: **the rival is a Cantonese *language model*,
+whereas this project is a question-answering model with Cantonese generation capability**. The
+two translation directions are consistent with this distinction.
 See [`results/standard_eval.md`](results/standard_eval.md).
 
-**4. One contribution that holds up: non-chain-of-thought deployment.**
+**4. Non-chain-of-thought deployment.**
 Mean output **13 tokens**, against 471 for the base and 451/493 for the two Thinking
 variants — **roughly 35×**. Where chain-of-thought is not an option (short answers, low
-latency, per-token billing, edge devices) those models are unusable.
+latency, per-token billing, edge devices) those models are unsuitable.
 
-**5. The publicly released data subset trains a better model than the full corpus — under
-both protocols.**
-Licensing leaves only 27,207 of 71,202 examples redistributable. We expected the public
-subset to be a cut-down version — **the measurement says the opposite**: +1.19pp on the
+**5. The public-data subset outperforms the full corpus under both protocols.**
+Licensing leaves only 27,207 of 71,202 examples redistributable. Although the public subset is
+smaller, **the measured performance is higher**: +1.19pp on the
 logprob protocol (p = 6.0e-7) and **+1.65pp on the official one** (p = 5.8e-10).
-**Re-measuring with a different ruler made the gap larger**, so this is not an artefact of
-one protocol. Both sets of weights are published, so **you can verify this ablation
-yourself.** See [`results/ablation_clean_data.md`](results/ablation_clean_data.md).
+The gap is larger under the second protocol, indicating that it is not specific to one
+evaluation protocol. Both sets of weights are published; the ablation is reproducible from the
+published weights and evaluation scripts. See [`results/ablation_clean_data.md`](results/ablation_clean_data.md).
 
 **6. An Ascend-native W8A8_DYNAMIC build is published and passed a non-inferiority gate.**
 Dynamic W8A8 via msmodelslim (11.1 GiB), loads straight into `vllm-ascend`. Full 26,368
 questions, same-protocol bf16 control, paired per question: Δ **−0.46pp**, 95% CI
 [−0.93, +0.00], upper confidence bound on the loss 0.93pp ≤ tolerance δ = 2.0pp.
-**We also built the static W8A8 variant and are deliberately not publishing it**: it is 64%
-faster but its output is token salad — **precisely because it never emits EOS and runs to
-the token limit.** See [`results/quantization.md`](results/quantization.md).
+**The static W8A8 variant is not published**: although it is 64% faster, its output is severely
+degraded because it does not emit EOS and continues generating until the token limit. See
+[`results/quantization.md`](results/quantization.md).
 
 ---
 
@@ -136,7 +136,7 @@ closest to the output.
 **4. Moving one CUDA evaluation script to Ascend took 4 lines of code changes; accuracy matched
 (6 questions out of 3300) and throughput differed by 3.6×.**
 Bringing up an OpenAI-compatible server with `vllm-ascend` also works (0.6B / TP=1,
-**ready in 65 s**), but two traps produce error messages that point nowhere near the real cause:
+**ready in 65 s**), but two issues produce error messages that do not identify the underlying cause:
 a missing **NNAL/ATB** (`libatb.so`, which is not in CANN and must be sourced separately), and
 **`set -u`, which makes the script exit silently while sourcing the Ascend environment**.
 
@@ -167,15 +167,15 @@ now reason before answering), which made it an **undeclared experimental variabl
 on the full set with pairing: base +5.51pp, Thinking +3.98pp, this project +3.00pp — while
 the three rivals that already had zero parse failures went **−0.14 to −0.93pp**.
 **Whether a protocol is usable depends on whether it is equally neutral toward every model
-being compared, not on whether it sounds fair.** What is actually worth reporting is
-**whether the ranking is stable across prompts**.
+being compared, not on whether it appears fair.** The relevant reporting target is
+**ranking stability across prompts**.
 See [`results/prompt_ablation.md`](results/prompt_ablation.md).
 
 **9. Significance is the wrong thing to use as a tolerance threshold — larger n always makes
 differences significant.**
 The same quantized variant measured −1.48pp on 3,300 questions (p = 0.025, significant) and
 −0.46pp on the full 26,368 (p = 0.052, not significant). A rule of "publish only if not
-significant" means **more data makes it harder to publish**, which is absurd. The correct form
+significant" would make the publication decision depend counterintuitively on sample size. The correct form
 is a **non-inferiority test**: fix an acceptable loss ceiling δ, then require the **95% upper
 confidence bound on the loss to be ≤ δ**. And remember both models answered the *same*
 questions, so **pairing is mandatory** — using each accuracy's own standard error inflates the
@@ -222,8 +222,8 @@ train/merge_lora_stream.py  Shard-by-shard streaming merge, ~5 GB peak RAM (for 
 deploy/npu_serve_test.sh    Bring up and validate a vllm-ascend OpenAI-compatible server on
                             Ascend (health check / chat / throughput)
 deploy/ascend.md            Ascend deployment guide (**also published under deploy/ in the HF
-                            model card**): bf16 conversion-free and native W8A8, the five
-                            packaging traps, and the torchair negative result
+                            model card**): bf16 conversion-free and native W8A8, five packaging
+                            issues, and the torchair negative result
 deploy/cuda.md              CUDA deployment guide (also mirrored to HF): bf16 / int4 /
                             the public-data ablation
 docs/v1-postmortem.md       How v1 diverged and how the root cause was found
@@ -262,12 +262,11 @@ deploy/verify_shards.py     Verify the shards are byte-identical to the original
 results/standard_eval.md    **The main results document**: 8 models × 3 tasks, full-set paired
                             tests
 results/prompt_ablation.md  Full prompt 2×2: ranking robustness, the language main effect,
-                            and what the old 0.6227 actually was
-                            and must not be read as results
+                            and clarification that the earlier 0.6227 value is not a result
 ```
 
-Paths in the scripts are written as `$LAB_ROOT` / `$HOME` — substitute your own environment
-before running them.
+Paths in the scripts are written as `$LAB_ROOT` / `$HOME` — replace them with paths for the
+local environment before running the scripts.
 
 ---
 
@@ -280,7 +279,7 @@ All three tasks are **judge-free** and recomputable:
 | **HKMMLU (main protocol)** | **Official zero-shot prompting**: ask for the letter directly, greedy decoding, full 26,368 questions | Prompting *is* the official standard (see the dataset README), and **only this protocol is comparable to the official leaderboard**. Unparseable outputs are **recorded separately as `unparsed_rate` and scored as wrong, never silently dropped** |
 | HKMMLU (secondary) | Compare the logprobs of the four letter tokens `A/B/C/D` | Removes instruction-following ability as a confounder and measures knowledge alone. **But it is not directly comparable to the official leaderboard**, so it is secondary only |
 | **Official translation tasks** | yue→zh and zh→yue, 2,000 items each, chrF + BLEU(zh), **also reported after script normalisation** | Multiple choice cannot measure "can it produce Cantonese"; this can. **Read the two directions separately** — producing and understanding are different abilities |
-| **Written-Cantonese purity** | Ratio of Cantonese function words (嘅係唔咗喺佢哋…) to Mandarin ones (的是不了在他們…) | Measures directly whether it is writing Cantonese or Mandarin. **Must be read together with degeneracy** — otherwise a single 嘅 inside a stream of garbage also scores 1.0 |
+| **Written-Cantonese purity** | Ratio of Cantonese function words (嘅係唔咗喺佢哋…) to Mandarin ones (的是不了在他們…) | Measures whether the output is oriented toward Cantonese or Mandarin. **Interpret together with degeneracy** to avoid over-interpreting a single function word in a degenerate output |
 | **Degeneracy detection** | Hit rate of `(.{6,})\1{2,}` under greedy decoding | A veto criterion: is the model still producing language at all |
 | **Perplexity** | Report both PPL and **bits-per-char** | Tokenizers differ across models, so PPL is not directly comparable; bits-per-char is |
 
@@ -303,12 +302,12 @@ script; the 27,207 redistributable examples (own data + CC0) are published separ
 [`Zeteng/cantonese-llm-data`](https://huggingface.co/datasets/Zeteng/cantonese-llm-data).
 See [`docs/data-licensing.md`](docs/data-licensing.md).
 
-Two numbers worth recording:
+Two relevant statistics are:
 - **50,606 records** were script-normalized during the build — Simplified/Traditional mixing in
   public Cantonese corpora is widespread, not marginal;
 - Cantonese purity: median 1.0, mean 0.824. **Purity is measured but never used as a filter** —
-  a cleaning threshold is the easiest way to throw away exactly the samples worth studying. Use
-  `--min-yue-ratio` if you want to ablate it.
+  an overly aggressive cleaning threshold may remove samples of research value. The threshold
+  can be varied with `--min-yue-ratio` for ablation.
 
 ---
 
@@ -319,10 +318,10 @@ All at **https://huggingface.co/Zeteng/qwen_yue_qa_finetuned_int4**
 
 | Subfolder | Size | Notes |
 |---|---|---|
-| `v2-qwen3-8b/` | 15.3 GiB | ✅ Start here — bf16, already merged |
+| `v2-qwen3-8b/` | 15.3 GiB | ✅ Recommended version — bf16, already merged |
 | `v2-ascend-w8a8-dynamic/` | **11.1 GiB** | ✨ **Ascend 910C native W8A8**, loads with `vllm-ascend --quantization ascend`, passed the non-inferiority gate |
 | `v2-qwen3-8b-int4/` | 5.7 GiB | NF4, fits one 8 GB GPU, **CUDA only** |
-| `v2-clean-data/` | 15.3 GiB | **The public-data-only ablation**, fully reproducible by you; under the official protocol it beats the full-data model |
+| `v2-clean-data/` | 15.3 GiB | **The public-data-only ablation**, reproducible from the published data and scripts; under the official protocol it beats the full-data model |
 | `v2-qwen3-8b-lora/` | 349 MB | LoRA adapter |
 
 The dataset is at **https://huggingface.co/datasets/Zeteng/cantonese-llm-data** (also gated).
