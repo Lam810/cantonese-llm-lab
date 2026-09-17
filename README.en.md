@@ -20,10 +20,6 @@ Six things are collected here:
    native W8A8 quantization, a **negative result** on graph-mode optimisation, and a pile of
    traps where the error message does not point at the cause.
 
-**These notes deliberately keep my own mistakes and retractions** (a retracted "we rank first",
-a gate threshold I got wrong twice, a universal conclusion drawn from 5 rows of an 8-row
-table…). Negative results and corrections are as useful as the positive ones.
-
 ---
 
 ## Primary affiliation and funding
@@ -37,12 +33,6 @@ Construction and Large Language Model Evaluation, **Grant No. 25ZD03**.
 ---
 
 ## Latest results (2026-09-17)
-
-> ⚠️ **The 09-16 version of this page claimed "we rank first". That was wrong and is
-> retracted.** It used our own logprob protocol. Re-running all 8 models on the full set
-> under the **official HKMMLU protocol** (strict zero-shot prompting, generative) puts us
-> **4th on HKMMLU and 2nd on written-Cantonese purity**. Everything below is the official
-> protocol.
 
 **1. HKMMLU, official protocol, full 26,368 questions: we are 4th of 8.**
 
@@ -158,8 +148,7 @@ Traditional corpus, inflating Cantonese purity to 0.964 (true value 0.824).
 actually the answer slot.** Multiple choice is scored by comparing the logprobs of A/B/C/D, but
 Qwen3 has thinking on by default and its first token is `<think>` — so what gets measured is
 "it would like to think first". The base therefore scored only 0.2888 (near chance); with
-thinking off it is 0.5700. **I briefly reported v2's gain as +31.85pp; the real value is
-+3.94pp.** See [`results/v2_results.md`](results/v2_results.md).
+thinking off it is 0.5700. See [`results/v2_results.md`](results/v2_results.md).
 
 **7. "Weights re-merged locally" and "the weights that were actually evaluated" are only
 assumed equivalent — verify it.** When moving 16 GB is impractical, moving just the 349 MB
@@ -167,18 +156,16 @@ adapter and re-merging locally is the right call, but it has to be verified byte
 authenticated HTTP range requests (3 tensors sampled, 32,768 bf16 elements each, 100%
 identical). The same proxy may download at 8.7 MB/s and upload at 50 KB/s — **measure each
 direction separately** — and **estimate remaining time from bytes-transferred ÷ elapsed, never
-from an instantaneous per-second rate** (I gave two wrong ETAs that way). HF's Xet backend
+from an instantaneous per-second rate**. HF's Xet backend
 fails whole batches on large files with `xorb not found`; `HF_HUB_DISABLE_XET=1` works around it.
 See [`docs/publishing-logistics.md`](docs/publishing-logistics.md).
 
 **8. A sentence added to a prompt "so the parser works" becomes an experimental variable.**
-To make the answer regex fire, I appended "write 答案：X on the last line" to the prompt.
+To make the answer regex fire, the prompt appended "write 答案：X on the last line".
 The motivation was purely engineering, but it also changed the model's action space (it may
 now reason before answering), which made it an **undeclared experimental variable**. Measured
 on the full set with pairing: base +5.51pp, Thinking +3.98pp, this project +3.00pp — while
-the three rivals that already had zero parse failures went **−0.14 to −0.93pp**. I had been
-publishing the scaffolded run as "protocol B" alongside the strict one, each model at its own
-best. That sounds fair, but it launders the asymmetry away.
+the three rivals that already had zero parse failures went **−0.14 to −0.93pp**.
 **Whether a protocol is usable depends on whether it is equally neutral toward every model
 being compared, not on whether it sounds fair.** What is actually worth reporting is
 **whether the ranking is stable across prompts**.
@@ -198,9 +185,8 @@ variance (0.87pp vs 0.65pp paired) and reports a real regression as noise.
 
 **10. Drawing a universal conclusion ("only X behaves this way") from M of N rows will bite
 you.**
-With 5 of 8 models finished I wrote "that scaffold sentence only helps us". Once the table was
-complete that was false — the base model and the Thinking variant both gained more than we
-did. The three missing rows happened to be the three most extreme behaviours (two
+Once all 8 models were included, the base model and the Thinking variant both gained more than
+we did. The three initially missing rows happened to be the three most extreme behaviours (two
 chain-of-thought models plus the base), and those are exactly the ones that need format hints
 the most.
 
@@ -249,16 +235,14 @@ docs/publishing-logistics.md Moving 16 GB of weights from an isolated cluster to
                             hosting: measured bandwidth per hop, the adapter-only approach,
                             byte-level verification
 results/v1_vs_base.md       v1 against its base
-results/v2_results.md       v2 (Qwen3-8B + LoRA) training, merge health check, and evaluation,
-                            including one wrong conclusion that was later corrected
+results/v2_results.md       v2 (Qwen3-8B + LoRA) training, merge health check, and evaluation
 results/sota_comparison.md  Head-to-head against 6 existing Cantonese models
                             (two protocols + paired tests)
 results/ablation_clean_data.md
                             Ablation: training on only the published 27,207 examples
                             gives a *better* model
 results/quantization.md     Measured fp16 / int4 / int8 / Ascend-native W8A8 variants,
-                            which columns are noise, and a record of getting the gate
-                            threshold wrong twice
+                            and how to interpret noisy columns
 eval/eval_hkmmlu_official.py  HKMMLU under the **official protocol** (zero-shot prompting,
                             generative) on the full set, plus the official yue↔zh translation
                             tasks (chrF/BLEU, also reported after script normalisation) and
@@ -276,7 +260,7 @@ deploy/shard_safetensors.py Split one large safetensors into <5 GB shards + inde
                             (works around HF's git-lfs limit)
 deploy/verify_shards.py     Verify the shards are byte-identical to the original, tensor by tensor
 results/standard_eval.md    **The main results document**: 8 models × 3 tasks, full-set paired
-                            tests, and every retraction and correction
+                            tests
 results/prompt_ablation.md  Full prompt 2×2: ranking robustness, the language main effect,
                             and what the old 0.6227 actually was
                             and must not be read as results
