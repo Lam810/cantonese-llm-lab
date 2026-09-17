@@ -40,6 +40,26 @@ def parse_choice(text):
             if m: return m[-1].group(1).upper()
     return None
 
+# ---------- 繁简归一 ----------
+# 为什么必须做：官方 can2man 的参考译文是**简体**，而我们的模型输出**繁体**。
+# chrF 是字符级的，繁简不同会让每个共享字都判成不匹配。实际样例：
+#   src 鐳射影碟喺香港同澳門地區仍然係一種常見嘅稱呼。
+#   ref 镭射影碟在香港和澳门地区仍然是一种常见的称呼。
+#   hyp 鐳射影碟在香港和澳門地區仍然是一種常見的稱呼。
+# 语域转换全对（喺→在 同→和 係→是 嘅→的），只差字形，raw chrF 却接近 0。
+# 所以两个都报：
+#   chrF        照做不误——提示词明写了「簡體中文」，输出繁体就是没照做
+#   chrF_t2s    hyp 和 ref 都归到简体再算，只量语域转换
+# 两者的差 = 字形合规带来的分差，把「不会理解粤语」和「没按要求出简体」分开。
+# 用 zh-hans（纯字形）而不是 zh-cn（还会换词汇），换词汇会把真实的用词差异抹掉。
+try:
+    from zhconv import convert as _zhconv
+    def to_simp(t): return _zhconv(t, "zh-hans")
+    HAS_ZHCONV = True
+except Exception:
+    def to_simp(t): return t
+    HAS_ZHCONV = False
+
 # ---------- 翻译输出清理 ----------
 # 只做最小、对所有模型对称的清理。过度清理会不均匀地抬高某些模型的分。
 _PREFIX_RE = re.compile(r"^\s*(?:譯文|译文|翻譯|翻译|粵語|粤语|普通話|普通话|答案|Translation)"
@@ -53,20 +73,37 @@ def clean_translation(text):
     return t
 
 # ---------- 提示词 ----------
-MC_PROMPT = ("以下是一道單項選擇題，請直接回答選項字母。\n\n"
-             "{q}\n"
-             "A. {a}\n"
-             "B. {b}\n"
-             "C. {c}\n"
-             "D. {d}\n\n"
-             "答案：")
+# 两种提示词，差别只有最后那一句。这是一个**单一变量的消融**，不是两种口径。
+#
+# strict   = 严格零样本，要一个字母、立刻给。这是我们对官方 "zero-shot
+#            prompting" 的严格读法，主表用它。
+# scaffold = 多一句「請喺最後一行寫「答案：X」」。这句话同时做了两件事：
+#            (1) 给解析器一个锚点；(2) 允许模型先写推理再作答。
+#            我们早期那张表用的就是它——**而它对我们的加成远大于对手**
+#            （ours +8.3pp，最强对手 CantoneseLLMChat 只有 +1.5pp），因为
+#            对手本来就 0 解析失败、不需要脚手架。把它当成"另一种口径"
+#            报出去，等于用自己加的提示把自己的指令遵循短板盖住，所以这里
+#            降级成可开关的消融项，主表只用 strict。
+_MC_BODY = ("以下是一道單項選擇題，請直接回答選項字母。\n\n"
+            "{q}\n"
+            "A. {a}\n"
+            "B. {b}\n"
+            "C. {c}\n"
+            "D. {d}\n\n")
+
+MC_PROMPTS = {
+    "strict":   _MC_BODY + "答案：",
+    "scaffold": _MC_BODY + "請喺最後一行寫「答案：X」。",
+}
+MC_PROMPT = MC_PROMPTS["strict"]        # 兼容旧调用
 
 TRANS_PROMPT = {
     "can2man": "請將以下粵語句子翻譯成普通話（簡體中文）。只輸出譯文，不要加任何解釋。\n\n{s}",
     "man2can": "請將以下普通話句子翻譯成粵語（繁體中文）。只輸出譯文，不要加任何解釋。\n\n{s}",
 }
 
-def load_mc(data_dir, limit_per_cfg=0):
+def load_mc(data_dir, limit_per_cfg=0, style="strict"):
+    tmpl = MC_PROMPTS[style]
     files = sorted(glob.glob(os.path.join(data_dir, "**", "test", "*.csv"), recursive=True))
     if not files:
         files = sorted(glob.glob(os.path.join(data_dir, "**", "*test*.csv"), recursive=True))
@@ -82,8 +119,8 @@ def load_mc(data_dir, limit_per_cfg=0):
             gold = (r.get("Answer") or r.get("answer") or "").strip().upper()[:1]
             if not q or gold not in letters: continue
             items.append({"cfg": cfg, "gold": gold,
-                          "prompt": MC_PROMPT.format(q=q, a=opts[0], b=opts[1],
-                                                     c=opts[2], d=opts[3])})
+                          "prompt": tmpl.format(q=q, a=opts[0], b=opts[1],
+                                                c=opts[2], d=opts[3])})
     return items
 
 def load_trans(trans_dir, n=0):
@@ -108,6 +145,9 @@ def main():
                          "quant_model_description.json，查 embed_tokens 直接 KeyError")
     ap.add_argument("--hkmmlu-dir", default=""); ap.add_argument("--trans-dir", default="")
     ap.add_argument("--limit-per-cfg", type=int, default=0)
+    ap.add_argument("--mc-style", choices=["strict", "scaffold"], default="strict",
+                    help="选择题提示词。strict=主表口径（只要字母）；scaffold=多一句「請喺最後一行寫「答案：X」」，"
+                         "用来消融「格式脚手架值多少分」——它不是另一种口径，别拿它报战绩")
     ap.add_argument("--trans-n", type=int, default=0)
     ap.add_argument("--max-tokens", type=int, default=1024,
                     help="思维链模型要留够，否则会在 think 块中间截断、答案根本没出来")
@@ -115,6 +155,8 @@ def main():
     ap.add_argument("--gpu-util", type=float, default=0.85)
     ap.add_argument("--purity-limit", type=int, default=0)
     ap.add_argument("--purity-max-new", type=int, default=128)
+    ap.add_argument("--save-hyps", action="store_true",
+                    help="把全部译文写成 <out>.<方向>.hyps.jsonl，省得为了换个打分口径重跑模型")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -129,12 +171,14 @@ def main():
 
     res = {"name": a.name, "model": a.model, "task": a.task,
            "protocol": "HKMMLU official: zero-shot prompting (generation), greedy",
-           "mc_prompt_template": MC_PROMPT, "trans_prompt_template": TRANS_PROMPT,
+           "mc_style": a.mc_style,
+           "mc_prompt_template": MC_PROMPTS[a.mc_style],
+           "trans_prompt_template": TRANS_PROMPT,
            "max_tokens": a.max_tokens}
     t0 = time.time()
 
     if a.task == "mc":
-        items = load_mc(a.hkmmlu_dir, a.limit_per_cfg)
+        items = load_mc(a.hkmmlu_dir, a.limit_per_cfg, a.mc_style)
         print(f"[{a.name}] MC 题数 {len(items)}", flush=True)
         outs = llm.chat([[{"role": "user", "content": it["prompt"]}] for it in items], sp)
         per_cfg, preds = {}, {}
@@ -209,13 +253,30 @@ def main():
                 hyps.append(clean_translation(raw)); refs.append(it["ref"]); raws.append(raw)
             chrf = sacrebleu.corpus_chrf(hyps, [refs]).score
             bleu = sacrebleu.corpus_bleu(hyps, [refs], tokenize="zh").score
+            # 繁简归一后再算一遍：只量语域转换，不罚字形
+            hs, rs = [to_simp(h) for h in hyps], [to_simp(r) for r in refs]
+            chrf_t2s = sacrebleu.corpus_chrf(hs, [rs]).score
+            bleu_t2s = sacrebleu.corpus_bleu(hs, [rs], tokenize="zh").score
+            # 输出里有多少条带繁体字（归一后发生了变化）= 没按「簡體中文」这条指令做
+            trad = sum(1 for h, x in zip(hyps, hs) if h != x)
             empty = sum(1 for h in hyps if not h)
             res["trans"][tag] = {
                 "n": len(hyps), "chrF": chrf, "BLEU_zh": bleu,
+                "chrF_t2s": chrf_t2s, "BLEU_zh_t2s": bleu_t2s,
+                "zhconv_available": HAS_ZHCONV,
+                "trad_output": trad, "trad_rate": trad / len(hyps),
                 "empty_output": empty, "empty_rate": empty / len(hyps),
                 "mean_out_tokens": tok_sum / len(hyps),
                 "samples": [{"src": items[i]["src"], "ref": refs[i], "hyp": hyps[i],
                              "raw": raws[i][:300]} for i in range(min(5, len(hyps)))]}
+            # 全部译文单独落盘：再分析时不必重跑模型
+            if a.save_hyps:
+                hp = a.out.replace(".json", f".{tag}.hyps.jsonl")
+                with open(hp, "w", encoding="utf-8") as fh:
+                    for i in range(len(hyps)):
+                        fh.write(json.dumps({"src": items[i]["src"], "ref": refs[i],
+                                             "hyp": hyps[i]}, ensure_ascii=False) + "\n")
+                print(f"[{a.name}] 译文已存 {hp}", flush=True)
             print(f"[{a.name}] {tag} chrF={chrf:.2f} BLEU={bleu:.2f} "
                   f"空输出={empty} 平均tok={tok_sum/len(hyps):.1f}", flush=True)
 
