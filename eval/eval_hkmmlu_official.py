@@ -91,9 +91,27 @@ _MC_BODY = ("以下是一道單項選擇題，請直接回答選項字母。\n\n
             "C. {c}\n"
             "D. {d}\n\n")
 
+# legacy = 完整复刻 `eval_yue.py:241-243` 那个旧提示词。它和 strict 差三处，
+#          不止末尾那句脚手架：
+#            (1) 整段是**书面粤语**（「以下係」「請答」），strict 是标准书面中文
+#            (2) 题目前面加了「題目：」
+#            (3) 明确列出「A、B、C 或 D」
+#          (1) 尤其要单独量：给粤语专化的模型喂粤语提示词，本身可能就是一个
+#          真实的增益来源，而不是作弊。把它和 scaffold 分开，才知道旧那个
+#          0.6227 里各占多少。
+_MC_BODY_YUE = ("以下係一道香港知識選擇題，請答 A、B、C 或 D。\n\n"
+                "題目：{q}\n"
+                "A. {a}\n"
+                "B. {b}\n"
+                "C. {c}\n"
+                "D. {d}\n\n")
+
 MC_PROMPTS = {
     "strict":   _MC_BODY + "答案：",
     "scaffold": _MC_BODY + "請喺最後一行寫「答案：X」。",
+    "legacy":   _MC_BODY_YUE + "請喺最後一行寫「答案：X」。",
+    # 只换语言、不加脚手架：把「粤语提示词」这一个变量单独摘出来
+    "yue_strict": _MC_BODY_YUE + "答案：",
 }
 MC_PROMPT = MC_PROMPTS["strict"]        # 兼容旧调用
 
@@ -145,7 +163,9 @@ def main():
                          "quant_model_description.json，查 embed_tokens 直接 KeyError")
     ap.add_argument("--hkmmlu-dir", default=""); ap.add_argument("--trans-dir", default="")
     ap.add_argument("--limit-per-cfg", type=int, default=0)
-    ap.add_argument("--mc-style", choices=["strict", "scaffold"], default="strict",
+    ap.add_argument("--mc-style",
+                    choices=["strict", "scaffold", "legacy", "yue_strict"],
+                    default="strict",
                     help="选择题提示词。strict=主表口径（只要字母）；scaffold=多一句「請喺最後一行寫「答案：X」」，"
                          "用来消融「格式脚手架值多少分」——它不是另一种口径，别拿它报战绩")
     ap.add_argument("--trans-n", type=int, default=0)

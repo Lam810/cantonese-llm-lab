@@ -61,10 +61,21 @@ run_one () {   # $1=die  $2=name  $3=path
 }
 
 # 8 个 die，每个 die 一条串行队列
+# 不能写死 die 0..7 这些绝对编号。同一节点上只要还有别的作业（哪怕是我自己
+# 的另一个作业）占着 die 0，Slurm 分给本作业的就是 die 2..9，写死 0..7 会落到
+# cgroup 外面，报 "Device:-1, RankID:-1 / Engine core initialization failed"，
+# 而且**八个任务全挂**、看不出和别的作业有关。作业 137921 就是这么死的：
+# 同脚本前三次都对，第四次错，唯一变化是 npu1-6 上还有我自己的 137919。
+DEVS=(${ASCEND_RT_VISIBLE_DEVICES//,/ })
+[ ${#DEVS[@]} -eq 0 ] && DEVS=(${ASCEND_VISIBLE_DEVICES//,/ })
+[ ${#DEVS[@]} -eq 0 ] && DEVS=(0 1 2 3 4 5 6 7)
+NDEV=${#DEVS[@]}
+echo "Slurm 给的 die: ${DEVS[*]}  (共 $NDEV)"
+
 i=0; PIDS=""
 for spec in "${MODELS[@]}"; do
   N="${spec%%|*}"; M="${spec#*|}"
-  run_one $((i % 8)) "$N" "$M" &
+  run_one "${DEVS[$((i % NDEV))]}" "$N" "$M" &
   PIDS="$PIDS $!"; i=$((i+1)); sleep 15
 done
 for p in $PIDS; do wait $p; done      # 裸 wait 会等到常驻进程，逐个等

@@ -86,7 +86,7 @@ export CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}
 同理，作业脚本里只写 `set -x` 不写 `set -e` 时，中间命令失败也会一路跑到最后的 `echo DONE`，
 **Slurm 记成 `COMPLETED 0:0`**——看状态码会以为跑成功了。
 
-## 四个实际踩到的坑
+## 五个实际踩到的坑
 
 **① 登录节点上 `import torch` 直接抛异常。**
 
@@ -118,6 +118,44 @@ ValueError: Using a `device_map` ... requires `accelerate`. You can install it w
 `UserWarning: The /usr/local/Ascend/cann-x.y.z ... owner does not match the current owner.`，
 这是共享集群上 CANN 装在 root 下的正常现象，不影响运行，但会把 stderr 淹掉——
 调试时记得 `grep -v "does not match the current owner"`。
+
+**⑤ `ASCEND_RT_VISIBLE_DEVICES` 不能写死 die 0..7。**
+
+在一个作业里把 N 个任务铺到 N 个 die 上，很自然会写成：
+
+```bash
+run_one $((i % 8)) "$N" "$M" &      # ← 错：假定本作业拿到的是 die 0..7
+...
+ASCEND_RT_VISIBLE_DEVICES=$G python ...
+```
+
+**只要同一节点上还有别的作业占着 die 0（哪怕是你自己提交的另一个作业），
+Slurm 分给你的就是 die 2..9**，写死的 0..7 会落到 cgroup 外面。报错完全看不出
+和别的作业有关：
+
+```
+RuntimeError: Engine core initialization failed. Failed core proc(s): {}
+[ERROR] ... (PID:364433, Device:-1, RankID:-1) ERR99999 UNKNOWN applicaiton exception
+```
+
+**而且是八个任务全挂**，不是只挂占用冲突的那两个。作业 137921 就是这么死的：
+同一个脚本前三次都跑对，第四次错，唯一的变化是 npu1-6 上还有我自己的 137919
+（它只要 2 个 die）。**「同脚本跑过三次都对」不能当成脚本正确的证据——
+它只说明前三次的环境恰好满足了脚本里那个没写出来的假设。**
+
+正确做法是从 Slurm 给的列表里取，别自己编号：
+
+```bash
+DEVS=(${ASCEND_RT_VISIBLE_DEVICES//,/ })
+[ ${#DEVS[@]} -eq 0 ] && DEVS=(${ASCEND_VISIBLE_DEVICES//,/ })
+[ ${#DEVS[@]} -eq 0 ] && DEVS=(0 1 2 3 4 5 6 7)
+NDEV=${#DEVS[@]}
+echo "Slurm 给的 die: ${DEVS[*]}  (共 $NDEV)"    # 这行一定要打，出事时省半小时
+run_one "${DEVS[$((i % NDEV))]}" "$N" "$M" &
+```
+
+顺带：`#SBATCH --gres=npu:N` 的 **N 只能是偶数**（一卡双芯，2 张卡按 1 张物理卡计费），
+写 `npu:1` 会被直接拒：`错误: NPU 卡数只能是 2、4、6、8、...`。
 
 ## 作业脚本骨架
 
