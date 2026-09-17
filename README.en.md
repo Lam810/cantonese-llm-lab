@@ -235,6 +235,11 @@ train/merge_lora.py         Single-process LoRA merge with an automatic ‖ΔW�
 train/merge_lora_stream.py  Shard-by-shard streaming merge, ~5 GB peak RAM (for low-memory machines)
 deploy/npu_serve_test.sh    Bring up and validate a vllm-ascend OpenAI-compatible server on
                             Ascend (health check / chat / throughput)
+deploy/ascend.md            Ascend deployment guide (**also published under deploy/ in the HF
+                            model card**): bf16 conversion-free and native W8A8, the five
+                            packaging traps, and the torchair negative result
+deploy/cuda.md              CUDA deployment guide (also mirrored to HF): bf16 / int4 /
+                            the public-data ablation
 docs/v1-postmortem.md       How v1 diverged and how the root cause was found
 docs/ascend-notes.md        Ascend 910C porting notes, including the negative result on
                             graph-mode optimization

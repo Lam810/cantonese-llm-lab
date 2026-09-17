@@ -188,6 +188,9 @@ train/train_yue_lora.py     LoRA SFT：帶驗證集＋早停＋只對 assistant 
 train/merge_lora.py         單進程合併 LoRA，並自動做 ‖ΔW‖/‖W‖ 體檢
 train/merge_lora_stream.py  逐分片流式合併，峰值內存約 5 GB（低內存機用）
 deploy/npu_serve_test.sh    昇騰上面起 vllm-ascend OpenAI 兼容服務並驗收（健康檢查／對話／吞吐）
+deploy/ascend.md            昇騰部署指引（**同時發佈喺 HF 模型卡嘅 deploy/ 下面**）：
+                            bf16 免轉換／原生 W8A8 兩條路、打包五層坑、torchair 負結果
+deploy/cuda.md              CUDA 部署指引（同樣同步到 HF）：bf16／int4／消融版三個選擇
 docs/v1-postmortem.md       v1 點樣發散、點樣查出根因
 docs/ascend-notes.md        昇騰 910C 適配筆記，連圖模式優化嘅負結果
 docs/data-licensing.md      點解合併語料唔可以再分發（四個來源裡面有兩個唔得），
