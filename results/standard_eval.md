@@ -417,9 +417,8 @@ python eval/compare_models.py --key mc ours_mc.json <其他>_mc.json ...
 python eval/prompt_ablation.py <strict结果目录> <scaffold结果目录>
 ```
 
-作业脚本：`deploy/npu_std_eval.sbatch`（8 模型 × 3 任务铺在 8 个 die 上）、
-`deploy/npu_prompt_ablation.sbatch`、`deploy/npu_trans_rescore.sbatch`、
-`deploy/npu_full_gate.sbatch`。
+评测在昇腾 910C 上跑，8 个模型 × 3 个任务铺在 8 个 die 上并行；
+集群作业编排脚本（分区名、节点排除、die 分配）与本报告结论无关，未随仓库发布。
 
 ---
 

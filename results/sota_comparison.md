@@ -297,5 +297,5 @@ python eval/eval_yue.py --model <路径> --name <名字>_think \
 
 # 配对检验与汇总
 python eval/compare_models.py ours_nothink.json <其他>_nothink.json ...
-python eval/summarize_rivals.py <结果目录>
+python eval/summarize_std.py <结果目录>
 ```

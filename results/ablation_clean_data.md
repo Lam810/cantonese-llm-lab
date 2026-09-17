@@ -169,7 +169,7 @@ Run "hf lfs-enable-largefiles ./path/to/your/repo" and try again.
 注意仓库里已有的 15.27 GiB 单文件是走 **HTTP API**（`huggingface_hub.upload_file`）
 传的，那条路没有 5 GB 限制——**两条上传路径的限制不一样**。
 
-切完必须验，这和验 LoRA 合并是同一个纪律（脚本：`deploy/verify_shards.py`）：
+切完必须验，这和验 LoRA 合并是同一个纪律——张量集合逐一比对 + 抽样逐字节比对：
 
 ```
 原文件张量 399 | 索引张量 399 | 集合一致 True

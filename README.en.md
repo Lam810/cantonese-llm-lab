@@ -118,62 +118,55 @@ degraded because it does not emit EOS and continues generating until the token l
 ## Repository layout
 
 ```
-eval/eval_yue.py            Three objective tasks: HKMMLU multiple choice (logprob scoring) /
-                            written-Cantonese purity + degeneracy detection / in- and
-                            out-of-distribution perplexity (with cross-tokenizer bits-per-char)
-eval/diag_lora_merge.py     LoRA health check: base / base+adapter / merged three-way
-                            comparison, plus per-module ‖ΔW‖/‖W‖
-data/build_yue_sft.py       Multi-source Cantonese SFT rebuild: merge → opencc script
-                            normalization → two-level dedup → source-stratified train/dev/test
-                            split (split before training, so no leakage)
-train/train_yue_lora.py     LoRA SFT: validation set + early stopping + loss on the assistant
-                            span only
-train/merge_lora.py         Single-process LoRA merge with an automatic ‖ΔW‖/‖W‖ health check
-train/merge_lora_stream.py  Shard-by-shard streaming merge, ~5 GB peak RAM (for low-memory machines)
-deploy/npu_serve_test.sh    Bring up and validate a vllm-ascend OpenAI-compatible server on
-                            Ascend (health check / chat / throughput)
-deploy/ascend.md            Ascend deployment guide (**also published under deploy/ in the HF
-                            model card**): bf16 conversion-free and native W8A8, five packaging
-                            issues, and the torchair negative result
-deploy/cuda.md              CUDA deployment guide (also mirrored to HF): bf16 / int4 /
-                            the public-data ablation
-docs/v1-postmortem.md       How v1 diverged and how the root cause was found
-docs/ascend-notes.md        Ascend 910C porting notes, including the negative result on
-                            graph-mode optimization
-docs/data-licensing.md      Why the merged corpus cannot be redistributed (two of four sources
-                            cannot), and what that implies for the weights' license
-docs/publishing-logistics.md Moving 16 GB of weights from an isolated cluster to public
-                            hosting: measured bandwidth per hop, the adapter-only approach,
-                            byte-level verification
-results/v1_vs_base.md       v1 against its base
-results/v2_results.md       v2 (Qwen3-8B + LoRA) training, merge health check, and evaluation
-results/sota_comparison.md  Head-to-head against 6 existing Cantonese models
-                            (two protocols + paired tests)
-results/ablation_clean_data.md
-                            Ablation: training on only the published 27,207 examples
-                            gives a *better* model
-results/quantization.md     Measured fp16 / int4 / int8 / Ascend-native W8A8 variants,
-                            and how to interpret noisy columns
 eval/eval_hkmmlu_official.py  HKMMLU under the **official protocol** (zero-shot prompting,
                             generative) on the full set, plus the official yue↔zh translation
                             tasks (chrF/BLEU, also reported after script normalisation) and
                             written-Cantonese purity; `--mc-style` drives the prompt ablation
+eval/eval_yue.py            Secondary protocol: HKMMLU first-token logprob scoring, purity,
+                            degeneration detection, in/out-of-distribution perplexity
+                            (with tokenizer-comparable bits-per-char). The 117 purity
+                            prompts live in this file
+eval/compare_models.py      Paired per-question testing (exact McNemar; the binomial is
+                            evaluated in log space)
 eval/prompt_ablation.py     Prompt ablation: strict vs scaffold, paired per question, and
                             how much of the gain is merely recovered parse failures
-eval/prompt_grid.py         Prompt 2×2 (language × format scaffold): main effects,
+eval/prompt_grid.py         Prompt 2x2 (language x format scaffold): main effects,
                             interaction, unparsed rate across all four arms
 eval/gate_check.py          Release gate: **non-inferiority test** against a same-protocol
-                            control, paired per question, plus a δ-sensitivity self-check
+                            control, paired per question, plus a delta-sensitivity self-check
+eval/summarize_std.py       Standard-eval summary (multiple choice / translation / purity)
 eval/summarize_trans.py     Translation summary: raw chrF alongside script-normalised chrF
-deploy/quant_msmodelslim.py W8A8 via Ascend's own msmodelslim (dynamic/static, anti-outlier
-                            as a separate pass)
-deploy/shard_safetensors.py Split one large safetensors into <5 GB shards + index
-                            (works around HF's git-lfs limit)
-deploy/verify_shards.py     Verify the shards are byte-identical to the original, tensor by tensor
-results/standard_eval.md    **The main results document**: 8 models × 3 tasks, full-set paired
-                            tests
-results/prompt_ablation.md  Full prompt 2×2: ranking robustness, the language main effect,
-                            and clarification that the earlier 0.6227 value is not a result
+data/build_yue_sft.py       Multi-source Cantonese SFT rebuild: merge -> opencc script
+                            normalisation -> two-level dedup -> source-stratified
+                            train/dev/test split (split before training, no leakage)
+train/train_yue_lora.py     LoRA SFT with a validation set, early stopping, and loss on
+                            assistant spans only
+train/merge_lora.py         Single-process LoRA merge with an automatic ||dW||/||W|| check
+deploy/ascend.md            Ascend deployment guide (**also published under deploy/ in the HF
+                            model card**): bf16 conversion-free and native W8A8, five classes
+                            of packaging problem, and the torchair negative result
+deploy/cuda.md              CUDA deployment guide (also mirrored to HF): bf16 / int4 /
+                            the public-data ablation
+docs/v1-postmortem.md       How v1 diverged and how the root cause was found
+docs/ascend-notes.md        Ascend 910C porting notes, including the negative result on
+                            graph-mode optimisation
+docs/data-licensing.md      Why the merged corpus cannot be redistributed (two of four
+                            sources block it) and the knock-on effect on weight licensing
+docs/publishing-logistics.md Moving 16 GB of weights from an isolated cluster to a public
+                            host: measured per-hop bandwidth, the adapter-only approach,
+                            byte-level verification
+results/standard_eval.md    **The main results document**: 8 models x 3 tasks, full-set
+                            paired tests
+results/prompt_ablation.md  Full prompt 2x2: ranking robustness, the language main effect,
+                            and what the old 0.6227 figure means
+results/sota_comparison.md  Comparison against six existing Cantonese models (two protocols
+                            plus paired tests)
+results/ablation_clean_data.md
+                            Ablation: training on only the 27,207 public examples does better
+results/quantization.md     Measured fp16 / int4 / int8 / Ascend-native W8A8 variants, and
+                            how to read the noise-dominated columns
+results/v2_results.md       v2 (Qwen3-8B + LoRA): training, merge health check, evaluation
+results/v1_vs_base.md       v1 against the base model
 ```
 
 Paths in the scripts are written as `$LAB_ROOT` / `$HOME` — replace them with paths for the

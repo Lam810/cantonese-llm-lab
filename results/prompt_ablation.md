@@ -1,8 +1,7 @@
 # 提示词消融：我们的第 4 名是不是提示词选出来的？
 
 > 2026-09-17。8 个模型 × 全量 HKMMLU 26,368 题 × 多个提示词臂，逐题配对。
-> 脚本 `eval/prompt_ablation.py`、`eval/prompt_grid.py`，作业
-> `deploy/npu_prompt_ablation.sbatch`、`deploy/npu_prompt_grid.sbatch`。
+> 分析脚本 `eval/prompt_ablation.py`、`eval/prompt_grid.py`。
 
 ## 为什么要做
 

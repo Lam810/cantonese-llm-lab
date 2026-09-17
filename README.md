@@ -99,16 +99,24 @@ msmodelslim 造嘅動態 W8A8（11.1 GiB），`vllm-ascend` 直接載。全量 2
 ## 倉庫結構
 
 ```
-eval/eval_yue.py            三個客觀任務：HKMMLU 選擇題（logprob 打分）／書面粵語純度
+eval/eval_hkmmlu_official.py  HKMMLU **官方口徑**（zero-shot prompting、生成式）全量評測
+                            ＋官方粵↔普翻譯任務（chrF/BLEU，同時報繁簡歸一後嘅分）
+                            ＋書面粵語純度；`--mc-style` 做提示詞消融
+eval/eval_yue.py            輔助口徑：HKMMLU 首 token logprob 打分／書面粵語純度
                             ＋退化檢測／分佈內外困惑度（含跨分詞器可比嘅 bits-per-char）
-eval/diag_lora_merge.py     LoRA 體檢：base / base+adapter / merged 三路對照
-                            ＋逐模組 ‖ΔW‖/‖W‖
+                            117 條純度提問集就喺呢個文件裡面
+eval/compare_models.py      逐題配對檢驗（McNemar 精確版，對數空間算二項概率）
+eval/prompt_ablation.py     提示詞消融：strict vs scaffold 逐題配對，
+                            並拆出「漲嘅分裡有幾多只係解析失敗翻盤」
+eval/prompt_grid.py         提示詞 2×2（語言 × 格式腳手架）：主效應、交互、四臂解析失敗率
+eval/gate_check.py          發佈閘門：**非劣效檢驗**（相對同口徑對照、逐題配對）
+                            ＋δ 敏感性自檢
+eval/summarize_std.py       標準評測匯總（選擇題／翻譯／純度三張表）
+eval/summarize_trans.py     翻譯任務匯總：raw chrF 同繁簡歸一後嘅 chrF 並排
 data/build_yue_sft.py       多源粵語 SFT 數據重建：合併→opencc 簡繁歸一→兩級去重
                             →按來源分層切 train/dev/test（先切再訓，杜絕洩漏）
 train/train_yue_lora.py     LoRA SFT：帶驗證集＋早停＋只對 assistant 段算 loss
 train/merge_lora.py         單進程合併 LoRA，並自動做 ‖ΔW‖/‖W‖ 體檢
-train/merge_lora_stream.py  逐分片流式合併，峰值內存約 5 GB（低內存機用）
-deploy/npu_serve_test.sh    昇騰上面起 vllm-ascend OpenAI 兼容服務並驗收（健康檢查／對話／吞吐）
 deploy/ascend.md            昇騰部署指引（**同時發佈喺 HF 模型卡嘅 deploy/ 下面**）：
                             bf16 免轉換／原生 W8A8 兩條路、五類打包問題、torchair 負結果
 deploy/cuda.md              CUDA 部署指引（同樣同步到 HF）：bf16／int4／消融版三個選擇
@@ -118,28 +126,16 @@ docs/data-licensing.md      點解合併語料唔可以再分發（四個來源�
                             以及對權重授權嘅連帶影響
 docs/publishing-logistics.md 將 16GB 權重由隔離集群搬去公開托管站：各段實測帶寬、
                             只搬 adapter 嘅做法、逐字節驗證
-results/v1_vs_base.md       v1 同基座嘅對照
-results/v2_results.md       v2（Qwen3-8B + LoRA）嘅訓練、合併體檢同評測結果
+results/standard_eval.md    **標準評測主文檔**：8 模型 × 3 任務、全量配對檢驗
+results/prompt_ablation.md  提示詞 2×2 完整結果：排名穩健性、語言主效應、
+                            舊 0.6227 數值嘅含義
 results/sota_comparison.md  同 6 個現有粵語模型嘅橫向對照（兩種口徑＋配對檢驗）
 results/ablation_clean_data.md
                             消融：只用公開發布嘅 27,207 條，訓出嚟反而更好
 results/quantization.md     fp16 / int4 / int8 / 昇騰原生 W8A8 變體實測，
                             以及噪聲欄位嘅判讀
-eval/eval_hkmmlu_official.py  HKMMLU **官方口徑**（zero-shot prompting、生成式）全量評測
-                            ＋官方粵↔普翻譯任務（chrF/BLEU，同時報繁簡歸一後嘅分）
-                            ＋書面粵語純度；`--mc-style` 做提示詞消融
-eval/prompt_ablation.py     提示詞消融：strict vs scaffold 逐題配對，
-                            並拆出「漲嘅分裡有幾多只係解析失敗翻盤」
-eval/prompt_grid.py         提示詞 2×2（語言 × 格式腳手架）：主效應、交互、四臂解析失敗率
-eval/gate_check.py          發佈閘門：**非劣效檢驗**（相對同口徑對照、逐題配對）
-                            ＋δ 敏感性自檢
-eval/summarize_trans.py     翻譯任務匯總：raw chrF 同繁簡歸一後嘅 chrF 並排
-deploy/quant_msmodelslim.py 用昇騰自家 msmodelslim 做 W8A8（動態／靜態、anti-outlier 分離）
-deploy/shard_safetensors.py 單個大 safetensors 切成 <5GB 分片＋index（繞 HF git-lfs 上限）
-deploy/verify_shards.py     分片後逐張量核對同原文件逐字節相同
-results/standard_eval.md    **標準評測主文檔**：8 模型 × 3 任務、全量配對檢驗
-results/prompt_ablation.md  提示詞 2×2 完整結果：排名穩健性、語言主效應、
-                            舊 0.6227 數值嘅含義
+results/v2_results.md       v2（Qwen3-8B + LoRA）嘅訓練、合併體檢同評測結果
+results/v1_vs_base.md       v1 同基座嘅對照
 ```
 
 腳本裡面嘅路徑全部寫成 `$LAB_ROOT` / `$HOME`，執行前請替換為本地環境嘅對應路徑。

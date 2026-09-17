@@ -137,7 +137,8 @@ LoRA 是预期之内的。真正的问题是它把生成能力弄坏了。
 python eval/eval_yue.py --model <model> --name <tag> \
        --tasks hkmmlu,purity --hkmmlu-dir <HKMMLU> --limit-per-cfg 50 --out results/<tag>.json
 
-# 三路对照 + 逐层权重差
-python eval/diag_lora_merge.py --base <base> --merged <merged> \
-       --adapter <merged>/checkpoint-XXXX --out results/diag.json
+# 三路对照（base / base+adapter / merged）+ 逐模块 ‖ΔW‖/‖W‖
+# 做法见本文上一节；诊断脚本未随仓库发布，核心只有两步：
+#   1) 把未合并的 adapter 挂回原始基座，看是否同样退化（分开「训练坏了」与「合并坏了」）
+#   2) 逐张量算 ‖ΔW‖/‖W‖，看变化是否只落在 target_modules 上、幅度是否在 0.01–0.05 量级
 ```

@@ -173,6 +173,9 @@ def main():
                     help="思维链模型要留够，否则会在 think 块中间截断、答案根本没出来")
     ap.add_argument("--max-model-len", type=int, default=4096)
     ap.add_argument("--gpu-util", type=float, default=0.85)
+    ap.add_argument("--tp", type=int, default=1,
+                    help="张量并行度。30B 级模型（如 Qwen3-30B-A3B，56.9 GiB）单 die 装不下，"
+                         "要 --tp 2。注意昇腾一卡双芯，ASCEND_RT_VISIBLE_DEVICES 要给两个 die")
     ap.add_argument("--purity-limit", type=int, default=0)
     ap.add_argument("--purity-max-new", type=int, default=128)
     ap.add_argument("--save-hyps", action="store_true",
@@ -181,7 +184,7 @@ def main():
     a = ap.parse_args()
 
     from vllm import LLM, SamplingParams
-    kw = dict(model=a.model, tensor_parallel_size=1, max_model_len=a.max_model_len,
+    kw = dict(model=a.model, tensor_parallel_size=a.tp, max_model_len=a.max_model_len,
               gpu_memory_utilization=a.gpu_util, trust_remote_code=True)
     if a.quantization: kw["quantization"] = a.quantization
     llm = LLM(**kw)

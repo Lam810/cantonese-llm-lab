@@ -62,7 +62,7 @@ RuntimeError: Internal error: invalid shard failed to verify cas info
 
 **① 流式合并必须逐分片，否则内存爆。**
 8B 的 base(16GB) + merged(16GB) 同时驻留需要 32GB+；开发机只有 15GB。
-按 safetensors 分片逐个处理，峰值约 5GB。见 `train/merge_lora_stream.py`。
+按 safetensors 分片逐个处理，峰值约 5GB（逐分片流式合并）。
 
 **② 高 RTT 链路上 `dd bs=1M skip=N` 优于 sftp，但任意字节偏移要用 `tail -c +N | head -c`。**
 `dd bs=1` 会让远端做上百万次单字节读，直接卡死。另外**截断的输出就是该块的合法前缀**

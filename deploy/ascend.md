@@ -141,4 +141,4 @@ W8A8 靜態      8 並發  1024 tok / 2.0s = 511.6 tok/s    128 token 撞上限
 
 完整腳本（含健康檢查、對話驗收、吞吐壓測）同全部評測腳本見
 https://github.com/Lam810/cantonese-llm-lab
-（`deploy/npu_serve_test.sh`、`deploy/quant_msmodelslim.py`、`eval/eval_hkmmlu_official.py`）。
+（`eval/eval_hkmmlu_official.py`）。

@@ -99,46 +99,42 @@ msmodelslim 做的动态 W8A8（11.1 GiB），`vllm-ascend` 直接加载。全�
 ## 仓库结构
 
 ```
-eval/eval_yue.py            三个客观任务：HKMMLU 选择题（logprob 打分）／书面粤语纯度
+eval/eval_hkmmlu_official.py  HKMMLU **官方口径**（zero-shot prompting、生成式）全量评测
+                            ＋官方粤↔普翻译任务（chrF/BLEU，同时报繁简归一后的分）
+                            ＋书面粤语纯度；`--mc-style` 做提示词消融
+eval/eval_yue.py            辅助口径：HKMMLU 首 token logprob 打分／书面粤语纯度
                             ＋退化检测／分布内外困惑度（含跨分词器可比的 bits-per-char）
-eval/diag_lora_merge.py     LoRA 体检：base / base+adapter / merged 三路对照
-                            ＋逐模块 ‖ΔW‖/‖W‖
+                            117 条纯度提问集就在这个文件里
+eval/compare_models.py      逐题配对检验（McNemar 精确版，对数空间算二项概率）
+eval/prompt_ablation.py     提示词消融：strict vs scaffold 逐题配对，
+                            并拆出「涨的分里有多少只是解析失败翻盘」
+eval/prompt_grid.py         提示词 2×2（语言 × 格式脚手架）：主效应、交互、四臂解析失败率
+eval/gate_check.py          发布闸门：**非劣效检验**（相对同口径对照、逐题配对）＋δ 敏感性自检
+eval/summarize_std.py       标准评测汇总（选择题／翻译／纯度三张表）
+eval/summarize_trans.py     翻译任务汇总：raw chrF 与繁简归一后的 chrF 并排
 data/build_yue_sft.py       多源粤语 SFT 数据重建：合并→opencc 简繁归一→两级去重
                             →按来源分层切 train/dev/test（先切再训，杜绝泄漏）
 train/train_yue_lora.py     LoRA SFT：带验证集＋早停＋只对 assistant 段算 loss
 train/merge_lora.py         单进程合并 LoRA，并自动做 ‖ΔW‖/‖W‖ 体检
-train/merge_lora_stream.py  逐分片流式合并，峰值内存约 5 GB（低内存机用）
-deploy/npu_serve_test.sh    昇腾上起 vllm-ascend OpenAI 兼容服务并验收（健康检查／对话／吞吐）
 deploy/ascend.md            昇腾部署指引（**同时发布在 HF 模型卡的 deploy/ 下**）：
                             bf16 免转换／原生 W8A8 两条路、五类打包问题、torchair 负结果
 deploy/cuda.md              CUDA 部署指引（同样同步到 HF）：bf16／int4／消融版三个选择
-docs/v1-postmortem.md       v1 如何发散、如何查出根因
+docs/v1-postmortem.md       v1 怎么发散、怎么查出根因
 docs/ascend-notes.md        昇腾 910C 适配笔记，含图模式优化的负结果
-docs/data-licensing.md      为什么合并语料不能再分发（四个来源里两个不能），
+docs/data-licensing.md      为什么合并语料不能再分发（四个来源里有两个不行），
                             以及对权重授权的连带影响
 docs/publishing-logistics.md 把 16GB 权重从隔离集群搬到公开托管站：各段实测带宽、
                             只搬 adapter 的做法、逐字节验证
-results/v1_vs_base.md       v1 与基座的对照
-results/v2_results.md       v2（Qwen3-8B + LoRA）的训练、合并体检与评测结果
+results/standard_eval.md    **标准评测主文档**：8 模型 × 3 任务、全量配对检验
+results/prompt_ablation.md  提示词 2×2 完整结果：排名稳健性、语言主效应、
+                            旧 0.6227 数值的含义
 results/sota_comparison.md  与 6 个现有粤语模型的横向对照（两种口径＋配对检验）
 results/ablation_clean_data.md
                             消融：只用公开发布的 27,207 条，训出来反而更好
 results/quantization.md     fp16 / int4 / int8 / 昇腾原生 W8A8 变体实测，
                             以及噪声栏位的判读
-eval/eval_hkmmlu_official.py  HKMMLU **官方口径**（zero-shot prompting、生成式）全量评测
-                            ＋官方粤↔普翻译任务（chrF/BLEU，同时报繁简归一后的分）
-                            ＋书面粤语纯度；`--mc-style` 做提示词消融
-eval/prompt_ablation.py     提示词消融：strict vs scaffold 逐题配对，
-                            并拆出「涨的分里有多少只是解析失败翻盘」
-eval/prompt_grid.py         提示词 2×2（语言 × 格式脚手架）：主效应、交互、四臂解析失败率
-eval/gate_check.py          发布闸门：**非劣效检验**（相对同口径对照、逐题配对）＋δ 敏感性自检
-eval/summarize_trans.py     翻译任务汇总：raw chrF 与繁简归一后的 chrF 并排
-deploy/quant_msmodelslim.py 用昇腾自家 msmodelslim 做 W8A8（动态／静态、anti-outlier 分离）
-deploy/shard_safetensors.py 单个大 safetensors 切成 <5GB 分片＋index（绕 HF git-lfs 上限）
-deploy/verify_shards.py     分片后逐张量核对与原文件逐字节相同
-results/standard_eval.md    **标准评测主文档**：8 模型 × 3 任务、全量配对检验
-results/prompt_ablation.md  提示词 2×2 完整结果：排名稳健性、语言主效应、
-                            旧 0.6227 数值的含义
+results/v2_results.md       v2（Qwen3-8B + LoRA）的训练、合并体检与评测结果
+results/v1_vs_base.md       v1 与基座的对照
 ```
 
 脚本里的路径都写成 `$LAB_ROOT` / `$HOME`，运行前请替换为本地环境中的对应路径。
