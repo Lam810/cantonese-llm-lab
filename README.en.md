@@ -107,102 +107,13 @@ The gap is larger under the second protocol, indicating that it is not specific 
 evaluation protocol. Both sets of weights are published; the ablation is reproducible from the
 published weights and evaluation scripts. See [`results/ablation_clean_data.md`](results/ablation_clean_data.md).
 
-**6. An Ascend-native W8A8_DYNAMIC build is published and passed a non-inferiority gate.**
+**6. An Ascend-native W8A8_DYNAMIC build is published.**
 Dynamic W8A8 via msmodelslim (11.1 GiB), loads straight into `vllm-ascend`. Full 26,368
 questions, same-protocol bf16 control, paired per question: Δ **−0.46pp**, 95% CI
 [−0.93, +0.00], upper confidence bound on the loss 0.93pp ≤ tolerance δ = 2.0pp.
 **The static W8A8 variant is not published**: although it is 64% faster, its output is severely
 degraded because it does not emit EOS and continues generating until the token limit. See
 [`results/quantization.md`](results/quantization.md).
-
----
-
-## Main findings
-
-**1. Without a validation set, an SFT training-loss curve proves nothing.**
-In the run that went wrong, loss fell from 1.59 to 0.25 within 200 steps and then flattened for
-6400 more — it looks like convergence, but it had actually collapsed into a degenerate solution
-that emits repeated strings. `eval_strategy="no"` makes those two cases look identical in the log.
-
-**2. The weight delta `‖ΔW‖/‖W‖` is the fastest LoRA health check.**
-254 of 310 tensors were untouched (consistent with `target_modules`), but `q_proj` in the last
-5 layers reached a relative difference of **0.50–1.06** — a healthy r=8/alpha=16 LoRA should sit
-at 0.01–0.05. The divergence was structured: confined to the query projections in the layers
-closest to the output.
-
-**3. Re-attaching the unmerged adapter to the pristine base separates "training broke" from
-"merging broke" in one step.** Both degenerated ⇒ merging was not the root cause.
-
-**4. Moving one CUDA evaluation script to Ascend took 4 lines of code changes; accuracy matched
-(6 questions out of 3300) and throughput differed by 3.6×.**
-Bringing up an OpenAI-compatible server with `vllm-ascend` also works (0.6B / TP=1,
-**ready in 65 s**), but two issues produce error messages that do not identify the underlying cause:
-a missing **NNAL/ATB** (`libatb.so`, which is not in CANN and must be sourced separately), and
-**`set -u`, which makes the script exit silently while sourcing the Ascend environment**.
-
-**5. A string metric that spans Simplified and Traditional must list both character forms.**
-A Mandarin-marker list written only in Simplified silently failed to match anything in a
-Traditional corpus, inflating Cantonese purity to 0.964 (true value 0.824).
-
-**6. Before scoring a thinking-capable model on its "first token", confirm the first token is
-actually the answer slot.** Multiple choice is scored by comparing the logprobs of A/B/C/D, but
-Qwen3 has thinking on by default and its first token is `<think>` — so what gets measured is
-"it would like to think first". The base therefore scored only 0.2888 (near chance); with
-thinking off it is 0.5700. See [`results/v2_results.md`](results/v2_results.md).
-
-**7. "Weights re-merged locally" and "the weights that were actually evaluated" are only
-assumed equivalent — verify it.** When moving 16 GB is impractical, moving just the 349 MB
-adapter and re-merging locally is the right call, but it has to be verified byte-for-byte with
-authenticated HTTP range requests (3 tensors sampled, 32,768 bf16 elements each, 100%
-identical). The same proxy may download at 8.7 MB/s and upload at 50 KB/s — **measure each
-direction separately** — and **estimate remaining time from bytes-transferred ÷ elapsed, never
-from an instantaneous per-second rate**. HF's Xet backend
-fails whole batches on large files with `xorb not found`; `HF_HUB_DISABLE_XET=1` works around it.
-See [`docs/publishing-logistics.md`](docs/publishing-logistics.md).
-
-**8. A sentence added to a prompt "so the parser works" becomes an experimental variable.**
-To make the answer regex fire, the prompt appended "write 答案：X on the last line".
-The motivation was purely engineering, but it also changed the model's action space (it may
-now reason before answering), which made it an **undeclared experimental variable**. Measured
-on the full set with pairing: base +5.51pp, Thinking +3.98pp, this project +3.00pp — while
-the three rivals that already had zero parse failures went **−0.14 to −0.93pp**.
-**Whether a protocol is usable depends on whether it is equally neutral toward every model
-being compared, not on whether it appears fair.** The relevant reporting target is
-**ranking stability across prompts**.
-See [`results/prompt_ablation.md`](results/prompt_ablation.md).
-
-**9. Significance is the wrong thing to use as a tolerance threshold — larger n always makes
-differences significant.**
-The same quantized variant measured −1.48pp on 3,300 questions (p = 0.025, significant) and
-−0.46pp on the full 26,368 (p = 0.052, not significant). A rule of "publish only if not
-significant" would make the publication decision depend counterintuitively on sample size. The correct form
-is a **non-inferiority test**: fix an acceptable loss ceiling δ, then require the **95% upper
-confidence bound on the loss to be ≤ δ**. And remember both models answered the *same*
-questions, so **pairing is mandatory** — using each accuracy's own standard error inflates the
-variance (0.87pp vs 0.65pp paired) and reports a real regression as noise.
-**Also check whether the verdict is sensitive to δ rather than trying to argue δ perfectly**
-(`eval/gate_check.py` prints this).
-
-**10. Drawing a universal conclusion ("only X behaves this way") from M of N rows will bite
-you.**
-Once all 8 models were included, the base model and the Thinking variant both gained more than
-we did. The three initially missing rows happened to be the three most extreme behaviours (two
-chain-of-thought models plus the base), and those are exactly the ones that need format hints
-the most.
-
-**11. Character-level metrics (chrF/BLEU) on cross-script tasks must also be reported after
-normalisation.**
-The official yue→zh references are Simplified and our output is Traditional; chrF is
-character-level, so sentences whose register was fully converted (喺→在, 同→和, 係→是, 嘅→的)
-scored near zero. Raw 23.95, normalised **52.81** — a **28.86-point** difference. Report both:
-the raw figure measures "did you follow the instruction", the normalised one measures "did you
-convert the register", and **the gap between them is what orthographic compliance is worth.**
-Normalise with character-only `zh-hans`, not `zh-cn` which also substitutes vocabulary.
-
-More detail in [`docs/v1-postmortem.md`](docs/v1-postmortem.md) and
-[`docs/ascend-notes.md`](docs/ascend-notes.md).
-
----
 
 ## Repository layout
 
@@ -271,8 +182,6 @@ local environment before running the scripts.
 ---
 
 ## About the evaluation tasks
-
-All three tasks are **judge-free** and recomputable:
 
 | Task | How | Why this way |
 |---|---|---|
