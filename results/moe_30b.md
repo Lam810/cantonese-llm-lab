@@ -290,6 +290,14 @@ python eval/summarize_trans.py results/ours30b        # 原始 chrF 与 chrF_t2s
 python eval/compare_models.py --key mc results/ours30b/*_mc.json
 ```
 
-**发布件**：LoRA adapter 在
-[`Zeteng/yue-qa-qwen3-30b-a3b`](https://huggingface.co/Zeteng/yue-qa-qwen3-30b-a3b)
-（102 MB，门禁）。基座为公开权重，合并可复现——`merge_check.json` 的三项数值即判据。
+**发布件**：[`Zeteng/yue-qa-qwen3-30b-a3b`](https://huggingface.co/Zeteng/yue-qa-qwen3-30b-a3b)
+（门禁，CC BY-NC-ND 4.0），两种形态都有：
+
+| 路径 | 大小 | 说明 |
+|---|---|---|
+| `weights-bf16/` | 57 GiB | 合并后 bf16 全权重，开箱即用。**本页所有数字就是在这份上量的** |
+| `adapter/` | 102 MB | 仅注意力 LoRA。基座为公开权重，合并可复现——`merge_check.json` 的三项数值即判据 |
+
+线上产物与训练集群上那份的一致性用 LFS oid 对账过（`model_info(files_metadata=True)`
+返回的 `lfs.sha256` 即 sha256，非 LFS 的小文件单独下载哈希）：**24/24 逐位一致**，
+不必下载 57 GiB 去验。
