@@ -86,7 +86,7 @@ export CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}
 同理，作业脚本里只写 `set -x` 不写 `set -e` 时，中间命令失败也会一路跑到最后的 `echo DONE`，
 **Slurm 记成 `COMPLETED 0:0`**——看状态码会以为跑成功了。
 
-## 五个实际踩到的坑
+## 六个实际踩到的坑
 
 **① 登录节点上 `import torch` 直接抛异常。**
 
@@ -142,6 +142,38 @@ RuntimeError: Engine core initialization failed. Failed core proc(s): {}
 同一个脚本前三次都跑对，第四次错，唯一的变化是 npu1-6 上还有我自己的 137919
 （它只要 2 个 die）。**「同脚本跑过三次都对」不能当成脚本正确的证据——
 它只说明前三次的环境恰好满足了脚本里那个没写出来的假设。**
+
+**⑥ `export PYTHONPATH=...` 用覆盖式赋值，vLLM 起不来——而且报的是和 ⑤ 一模一样的错。**
+
+`source /usr/local/Ascend/ascend-toolkit/set_env.sh` 会把 CANN 的 **`acl` 模块**装进
+`PYTHONPATH`。后面为了加自己的库，很容易写成覆盖：
+
+```bash
+export PYTHONPATH=$L/pylibs:$L/pylibs_bleu        # ← 错：把 acl 一起抹了
+export PYTHONPATH=${PYTHONPATH:-}:$L/pylibs       # ← 对：追加
+```
+
+症状极具误导性，**顶层报错与 ⑤ 完全同一个签名**：
+
+```
+RuntimeError: Engine core initialization failed. Failed core proc(s): {}
+[ERROR] ... (Device:-1, RankID:-1) ERR99999 UNKNOWN applicaiton exception
+```
+
+真因要往上翻十几行、在 `EngineCore_DP0` 的子进程 traceback 里才看得到：
+
+```
+ModuleNotFoundError: No module named 'acl'
+```
+
+**所以看到 `Engine core initialization failed` 不要直接当 die 分配问题**，
+先 `grep "No module named"`。做法上：source 完 `set_env.sh` 之后
+`ASC_PP="${PYTHONPATH:-}"` 存一份，之后每次都从 `"$ASC_PP"` 接着写。
+
+一条附带教训：为此差点去「修」另一个不存在的毛病——合并产物的 `config.json` 用的是
+`transformers` 4.57 的新字段 `dtype`（不是 `torch_dtype`），看起来很像病因。
+但查了同一套栈上**已知能跑**的两个模型，它们也都是 `dtype`，所以不是。
+**动手改之前，先找一个「已知能跑」的对照去比。**
 
 正确做法是从 Slurm 给的列表里取，别自己编号：
 

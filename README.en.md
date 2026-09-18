@@ -32,9 +32,25 @@ Construction and Large Language Model Evaluation, **Grant No. 25ZD03**.
 
 ---
 
-## Latest results (2026-09-17)
+## Latest results (2026-09-18)
 
-**1. HKMMLU, official protocol, full 26,368 questions: we are 4th of 8.**
+This project maintains **two parallel model lines with no designated flagship** — their
+strengths differ:
+
+| | HKMMLU (knowledge) | Man→Yue (producing Cantonese) | Yue→Man (understanding Cantonese) | Unparsed |
+|---|---|---|---|---|
+| **30B-A3B (MoE, attention-only LoRA)** | **0.6467 (1st of 11)** | 44.51 | **57.30** | **0.0003** |
+| **8B (dense, seven-module LoRA)** | 0.5394 (6th of 11) | **52.36** | 52.81 | 0.0442 |
+
+**Use the 30B for knowledge QA and format compliance; the 8B remains preferable for
+generating idiomatic written Cantonese.** Full results for the 30B run, the attribution
+analysis (base versus recipe; net of the format component) and the known trade-off are in
+[`results/moe_30b.md`](results/moe_30b.md).
+
+Sections 1 and 2 below compare the **eight models at the 8B scale**, under exactly the same
+protocol as the 30B run.
+
+**1. HKMMLU, official protocol, full 26,368 questions: the 8B release is 4th of 8.**
 
 | Rank | Model | Accuracy | 95% CI | Unparsed | Mean out tok |
 |---|---|---|---|---|---|
@@ -47,8 +63,13 @@ Construction and Large Language Model Evaluation, **Grant No. 25ZD03**.
 | 7 | `CantoneseLLM-v2.0-8B-Thinking` | 0.3993 | ±0.59pp | 0.0825 | 451 |
 | 8 | `v2.0-8B-Thinking-Chat-Vector-Merged` | 0.3968 | ±0.59pp | 0.0736 | 493 |
 
-Paired McNemar against the leader: **−5.03pp** (95% CI [−5.68, −4.37], p = 1.6e-51).
-The difference is statistically significant.
+Paired McNemar, 8B release against the leader of this table: **−5.03pp**
+(95% CI [−5.68, −4.37], p = 1.6e-51). The difference is statistically significant.
+
+> This table excludes the 30B run. Under the same protocol: this project's 30B-A3B scores
+> **0.6467**, ahead of the leader of this table by **+5.69pp** (95% CI [+5.07, +6.38],
+> p = 2.5e-63); `Qwen/Qwen3-30B-A3B` (base) scores 0.4487. Inserted into this table, our
+> 30B would rank 1st and its base 10th.
 
 **The ranking remains stable under prompt ablation.** We ran a full 2×2 over the prompt (language × format
 scaffold) plus two sample sizes = **8 combinations, and the rival wins every one of them**.
@@ -155,8 +176,11 @@ docs/data-licensing.md      Why the merged corpus cannot be redistributed (two o
 docs/publishing-logistics.md Moving 16 GB of weights from an isolated cluster to a public
                             host: measured per-hop bandwidth, the adapter-only approach,
                             byte-level verification
-results/standard_eval.md    **The main results document**: 8 models x 3 tasks, full-set
-                            paired tests
+results/standard_eval.md    **The main results document**: eight models at the 8B scale
+                            x 3 tasks, full-set paired tests
+results/moe_30b.md          **Changing the base**: the same recipe applied to
+                            Qwen3-30B-A3B (MoE) -- results, attribution (base versus
+                            recipe; net of the format component), known trade-off
 results/prompt_ablation.md  Full prompt 2x2: ranking robustness, the language main effect,
                             and what the old 0.6227 figure means
 results/sota_comparison.md  Comparison against six existing Cantonese models (two protocols
@@ -225,6 +249,13 @@ All at **https://huggingface.co/Zeteng/qwen_yue_qa_finetuned_int4**
 | `v2-qwen3-8b-int4/` | 5.7 GiB | NF4, fits one 8 GB GPU, **CUDA only** |
 | `v2-clean-data/` | 15.3 GiB | **The public-data-only ablation**, reproducible from the published data and scripts; under the official protocol it beats the full-data model |
 | `v2-qwen3-8b-lora/` | 349 MB | LoRA adapter |
+
+**The 30B-A3B run lives in a separate repository:** **https://huggingface.co/Zeteng/yue-qa-qwen3-30b-a3b** (gated, CC BY-NC-ND 4.0):
+
+| Path | Size | Notes |
+|---|---|---|
+| `adapter/` | 102 MB | LoRA adapter (attention-only, r=32). The base is public weights, so the merge is reproducible — the criteria are 18867 / 192 / 0.15516 in `merge_check.json` |
+| Merged bf16 weights | 57 GiB | To be released |
 
 The dataset is at **https://huggingface.co/datasets/Zeteng/cantonese-llm-data** (also gated).
 
