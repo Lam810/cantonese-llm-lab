@@ -213,7 +213,7 @@ results/v1_vs_base.md       v1 与基座的对照
 | 子目录 | 大小 | 说明 |
 |---|---|---|
 | `adapter/` | 102 MB | LoRA adapter（仅注意力，r=32）。基座为公开权重，合并可复现——判据是 `merge_check.json` 的 18867 / 192 / 0.15516 |
-| 合并后 bf16 全权重 | 57 GiB | 待发布 |
+| `weights-bf16/` | 57 GiB | 合并后 bf16 全权重，开箱即用。24/24 文件 sha256 与集群上那份逐位一致 |
 
 数据集在 **https://huggingface.co/datasets/Zeteng/cantonese-llm-data**（同样门禁）。
 

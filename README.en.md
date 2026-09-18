@@ -255,7 +255,7 @@ All at **https://huggingface.co/Zeteng/qwen_yue_qa_finetuned_int4**
 | Path | Size | Notes |
 |---|---|---|
 | `adapter/` | 102 MB | LoRA adapter (attention-only, r=32). The base is public weights, so the merge is reproducible — the criteria are 18867 / 192 / 0.15516 in `merge_check.json` |
-| Merged bf16 weights | 57 GiB | To be released |
+| `weights-bf16/` | 57 GiB | Merged bf16 weights, ready to use. All 24 files sha256-identical to the copy on the cluster |
 
 The dataset is at **https://huggingface.co/datasets/Zeteng/cantonese-llm-data** (also gated).
 
